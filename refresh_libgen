@@ -1,0 +1,347 @@
+#!/usr/bin/env bash
+#
+# refresh libgen databases from dump files
+
+version="0.4"
+release="20161023"
+
+trap "trap_error" TERM
+trap "trap_exit" EXIT
+export TOP_PID=$$
+
+main () {
+
+	# PREFERENCES
+
+	# maximum age (in days) of database dump file to use
+	max_age=5
+
+	# database server to use
+	dbhost="localhost"
+	dbport="3306"
+	dbuser="libgen"
+
+	# where to get updates. A change here probably necessitates a change in the urls array
+	# as dump file names are site-specific. A possible alternative here is http://libgen.io
+	#base="http://gen.lib.rus.ec/dbdumps/"
+    base="http://libgen.io/dbdumps"
+
+	# database names
+	declare -A databases=(
+		[main]=libgen
+		[compact]=libgen_compact
+		[fiction]=libgen_fiction
+		[comics]=libgen_comics
+	)
+
+	# (mostly) END OF PREFERENCES
+
+	# urls for dump files (minus datestamp and extension)
+#	declare -A urls=(
+#		[main]="${base}/libgen"
+#		[compact]="${base}/libgen_compact"
+#		[fiction]="${base}/fiction"
+#		[comics]="${base}/comics"
+#	)
+	declare -A urls=(
+		[main]="${base}/libgen/libgen_all_dbbackup"
+		[compact]="${base}/libgen/libgen_dbbackup"
+		[fiction]="${base}/fiction/libgen_fiction_dbbackup"
+		[comics]="${base}/comics/comics_dbbackup"
+	)
+
+	# sql to get time last modified for database
+	declare -A lastmodified=(
+		[main]="select max(timelastmodified) from updated;"
+		[compact]="select max(timelastmodified) from updated;"
+		[fiction]="select max(timelastmodified) from main;"
+		[comics]="select time_last_modified from comics_index_update_date limit 1;"
+	)
+
+	# sql to run BEFORE update
+	declare -A before_update=(
+	)
+
+	# sql to run AFTER update
+	declare -A after_update=(
+		[compact]="drop trigger updated_edited;create table description (id int(11) not null auto_increment, md5 varchar(32) not null default '', descr varchar(20000) not null default '', toc mediumtext not null, TimeLastModified timestamp not null default current_timestamp on update current_timestamp, primary key (id), unique key md5_unique (md5) using btree, key time (timelastmodified) using btree, key md5_hash (md5) using hash);"
+	)
+
+	declare -A options=(
+		[wget]="-nv"
+		[wget_verbose]=""
+		[unrar]="-inul"
+		[unrar_verbose]=""
+	)
+
+
+	tmpdir=$(mktemp -d /var/tmp/libgen.XXXXXX)
+
+	while getopts "d:hH:knp:P:qu:v@" OPTION
+	do
+	case $OPTION in
+		n)
+			no_action=1
+			;;
+		d)
+			max_age=${OPTARG}
+			;;
+		u)
+			dbs+=" ${OPTARG}"
+			;;
+		v)
+			verbose="_verbose"
+			;;
+		H)
+			dbhost="${OPTARG}"
+			;;
+		P)
+			dbport="${OPTARG}"
+			;;
+		U)
+			dbuser="${OPTARG}"
+			;;
+		p)
+			password="${OPTARG}"
+			if [[ -z $password ]]; then
+				password=$(read_password)
+				echo
+			fi
+			;;
+		q)
+			dbpass="-p"
+			;;
+
+		@)
+			use_torsocks=1
+			source $(which torsocks) on
+			;;
+        k)
+            keep_downloaded_files=1
+            ;;
+		h)
+			help
+			exit
+			;;
+	esac
+	done
+
+	check_sanity
+
+	[[ -n ${password} ]] && dbpass="-p${password}"
+
+	# skip credential check when using password prompt option - password will be asked often enough as it is...
+	[[ ${dbpass} != "-p" ]] && check_credentials
+
+	[[ -z ${dbs} ]] && dbs="${!databases[@]}"
+
+	pushd $tmpdir >/dev/null
+	for db in ${dbs}; do
+		database=${databases[$db]}
+		if [[ $(db_exists "$database") ]]; then
+			db_dump=$(is_available ${db} ${max_age})
+			if [[ -n $db_dump ]]; then
+				[[ -n $verbose ]] && echo "update available for ${db}: ${db_dump}"
+				if [[ -z ${no_action} ]]; then
+					wget ${options[wget${verbose}]} ${db_dump}
+					unrar ${options[unrar${verbose}]} x $(basename ${db_dump})
+                    correct_database_name $(unrar lb $(basename ${db_dump})) ${database}
+					drop_tables=$(drop_table_sql "${database}")
+					[[ -n $drop_tables ]] && dbx ${database} "${drop_tables}"
+					[[ -n ${before_update[$db]} ]] && dbx ${database} "${before_update[$db]}"
+					if [[ -n $verbose ]]; then
+						echo "importing $(basename ${db_dump}) into ${database}"
+						pv $(unrar lb $(basename ${db_dump}))| dbx ${database}
+					else
+						dbx ${database} < $(unrar lb $(basename ${db_dump}))
+					fi
+					[[ -n ${after_update[$db]} ]] && dbx ${database} "${after_update[$db]}"
+				fi
+			else
+				[[ -n $verbose ]] && echo "no update available for ${db}"
+			fi
+		else
+			echo "database '$database' does not exist, please create it before attempting to refresh" >&2
+		fi
+	done
+	popd >/dev/null
+}
+
+dbx () {
+	database=$1
+	shift
+
+        if [ $# -gt 0 ]; then
+                mysql -sssss -h ${dbhost} -P ${dbport} -u ${dbuser} ${dbpass} ${database} -e "$*"
+        else
+                mysql -sssss -h ${dbhost} -P ${dbport} -u ${dbuser} ${dbpass} ${database}
+        fi
+}
+
+
+# check whether there is a dump file which is more recent than the current database and no older
+# than $max_age
+is_available () {
+        db="$1"
+        max_age="$2"
+
+	db_age=$(db_age $db)
+
+	age=0
+
+	while [[ $age -lt $db_age && $age -lt $max_age ]]; do
+		timestamp=$(date -d "@$(($(date +%s) - $((60*60*24*$age))))" +%Y-%m-%d)
+        	#result=$(w3m -dump ${base} | awk '{ print $3 }'|grep $(basename "${urls[$db]}_${timestamp}.rar"))
+            result=$(w3m -dump $(dirname ${urls[$db]}) | awk '{ print $1 }'|grep $(basename "${urls[$db]}-${timestamp}.rar"))
+		[[ -n $result ]] && break
+		let age+=1
+	done
+
+    [[ -n $result ]] && echo $(dirname ${urls[$db]})/${result}
+}
+
+# drop tables to prepare database for refresh
+drop_table_sql () {
+        database="$1"
+        dbx "$database" "SELECT concat('DROP TABLE IF EXISTS ', table_name, ';') FROM information_schema.tables WHERE table_schema = '$dbname';"
+}
+
+# returns database name if it exists, nothing otherwise
+db_exists () {
+	database="$1"
+	dbx $database "select schema_name from information_schema.schemata where schema_name='$database';" 2>/dev/null
+}
+
+# return database age in days
+db_age () {
+	db="$1"
+	db_last_modified=$(date -d "$(dbx $database ${lastmodified[$db]})" +%s)
+	now=$(date +%s)
+	echo $(((${now}-${db_last_modified})/60/60/24))
+}
+
+# run sed script on dump file
+db_dump_edit () {
+    dump_file="$1"
+    sed_command="$2"
+    if [[ -n $verbose ]]; then
+        echo "running '$sed_command' on '$dump_file'"
+    fi
+    sed -i -e "$sed_command" "$dump_file"
+}
+
+# correct database name in dump file
+correct_database_name () {
+    dump_file="$1"
+    database="$2"
+    db_dump_edit "$dump_file" '1,50 s/^CREATE DATABASE .*/CREATE DATABASE IF NOT EXISTS '"$database"' DEFAULT CHARACTER SET utf8;/'
+    db_dump_edit "$dump_file" '1,50 s/^USE .*/USE '"$database"';/'
+}
+
+# find tool, returns the first|one|found, exit with error message if none found
+find_tool () {
+        IFS='|' read -ra tools <<< "$*"
+
+        found=0
+
+        for tool in "${tools[@]}"; do
+                if [[ -n $(which "$tool") ]]; then
+                        found=1
+                        break
+                fi
+        done
+
+        if [[ $found -eq 0 ]]; then
+                if [[ ${#tools[@]} -gt 1 ]]; then
+                        exit_with_error "missing programs: $*; install at least one of these: ${tools[*]} and try again"
+                else
+                        exit_with_error "missing program: $1; please install and try again"
+                fi
+        fi
+
+        echo "$tool"
+}
+
+# read password from command line
+read_password () {
+	password=""
+	prompt="Enter database password:"
+	while IFS= read -p "$prompt" -r -s -n 1 char
+	do
+	    if [[ $char == $'\0' ]]
+	    then
+		break
+	    fi
+	    prompt='*'
+	    password+="$char"
+	done
+	echo "$password"
+}
+
+check_credentials () {
+	if [[ ! $(dbx "" "select true;" 2>/dev/null) ]]; then
+		exit_with_error "database connection error, bad username or password?"
+	fi
+}
+
+check_sanity () {
+	find_tool "w3m" > /dev/null
+	find_tool "wget" > /dev/null
+	find_tool "unrar" > /dev/null
+	[[ -n $verbose ]] && find_tool "pv" > /dev/null
+}
+
+cleanup () {
+        if [[ ! -v keep_downloaded_files ]]; then
+            rm -rf ${tmpdir}
+        else
+            echo "-k option active, temporary directory ${tmpdir} not removed"
+        fi
+}
+
+trap_error () {
+        cleanup
+        exit 1
+}
+
+trap_exit () {
+        cleanup
+        exit
+}
+
+# echo error message to stdout and terminate main
+exit_with_error () {
+        echo "$*" >&2
+
+        kill -s TERM $TOP_PID
+}
+
+help () {
+        echo $(basename $(readlink -f $0)) "version $version"
+        cat <<- EOT
+
+	Usage: refresh_libgen OPTIONS
+
+	Performs a refresh from a database dump file for the chosen libgen databases.
+
+	    -n		do not refresh database
+	 		use together with '-v' to check if recent dumps are available
+	    -v		be verbose about what is being updated
+	    -d DAYS	only use database dump files no older than DAYS days (default: ${max_age})
+	    -u DBS	refresh DBS databases (default: ${!databases[@]})
+
+	    -H DBHOST	database host (default: ${dbhost})
+	    -P DBPORT	database port (default: ${dbport})
+	    -U DBUSER	database user (default: ${dbuser})
+	    -p DBPASS	database password (cache password for this session)
+	 		use empty string ("") to get password prompt
+	    -q		prompt for password on each database invocation
+	 		safer (password not visible in ps) but less convenient
+	    -@		use tor (through torsocks) to connect to libgen server
+	    -k		keep downloaded files after exit
+	    -h		this help message
+
+	EOT
+}
+
+main "$@"

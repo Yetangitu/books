@@ -1,0 +1,380 @@
+#!/usr/bin/env bash
+
+version="0.4"
+release="20161023"
+
+trap "trap_error" TERM
+trap "trap_exit" EXIT
+
+LOCKFILE="/var/lock/$(basename $0)"
+LOCKFD=99
+
+main () {
+
+	exlock_now || exit 1
+
+	# PREFERENCES
+
+	dbhost="localhost"
+	dbport="3306"
+	db="libgen"
+	dbuser="libgen"
+	limit=1000
+
+	# (more or less) END OF PREFERENCES
+
+	api="http://libgen.io/json.php"
+	#api="http://libgen.unblocked.tv/json.php"
+	tmpdir=$(mktemp -d '/tmp/update_libgen.XXXXXX')
+	updates="${tmpdir}/updates"
+	update_count="${tmpdir}/update_count"
+	update_sql="${tmpdir}/update_sql"
+	update_last_modified="${tmpdir}/update_last_modified"
+	update_last_id="${tmpdir}/update_last_id"
+
+	verbose=0
+	no_action=0
+	unknown_fields=""
+
+	while getopts "D:j:hH:i:l:np:P:qs:t:u:v@" OPTION
+	do
+	case $OPTION in
+		j)
+			json_dump="${OPTARG}"
+			;;
+		s)
+			sql_dump="${OPTARG}"
+			;;
+		v)
+			let verbose+=1
+			;;
+		n)
+			no_action=1
+			;;
+		l)
+			limit="${OPTARG}"
+			if [[ $limit -le 1 ]]; then
+				echo "limit to low (-l ${limit}), minimum is 2"
+				exit
+			fi
+			;;
+		t)
+			startdatetime="${OPTARG}"
+			;;
+        i)
+            echo "${OPTARG}" > ${update_last_id}
+            ;;
+		u)
+			api="${OPTARG}"
+			;;
+		H)
+			dbhost="${OPTARG}"
+			;;
+		P)
+			dbport="${OPTARG}"
+			;;
+		U)
+			dbuser="${OPTARG}"
+			;;
+		p)
+			dbpass="-p${OPTARG}"
+			;;
+		D)
+			db="${OPTARG}"
+			;;
+		@)
+			use_torsocks=1
+			source $(which torsocks) on
+			;;
+        q)
+            quiet=1
+            ;;
+		h)
+			help
+			exit
+	esac
+	done
+
+	check_sanity
+
+	check_fields
+
+	while (
+		if [[ -s ${update_last_modified} ]]; then
+			last_update="$(cat ${update_last_modified})"
+			last_update_in_db="$(get_time_last_modified)"
+			if [[ $last_update != $last_update_in_db && $no_action == 0 ]]; then
+				echo "uh oh... something went wrong, last update in db does not equal last update from api response..."
+				exit
+			fi
+		elif [[ -n $startdatetime ]]; then
+			last_update="${startdatetime}"
+		else
+			last_update="$(get_time_last_modified)"
+		fi
+
+		last_id=$([[ -s ${update_last_id} ]] && cat ${update_last_id} || echo "1")
+
+		get_updates $last_id $limit "$last_update" 
+
+		updcnt=$(get_update_count)
+
+		[[ -n $json_dump ]] && cat ${updates} >> "${json_dump}"
+
+		if [[ $verbose -ge 1 ]]; then
+			echo "database last modified: $last_update";
+			# update counter is 0-based, humans prefer 1-based notation
+			if [[ ${updcnt} -gt 0 ]]; then
+				echo "$((${updcnt}+1)) updates";
+			else
+				more=$([[ -s $update_last_id ]] && echo "more " || echo "")
+				echo "no ${more}updates"
+			fi
+			echo ;
+		fi
+
+		test $updcnt -gt 0
+	); do
+
+		updcnt=$(get_update_count)
+		count=0
+		> ${update_sql}
+
+		while [ $count -le $updcnt ]; do
+			declare -A record
+			while IFS="=" read -r key value
+			do
+				# drop unknown fields
+                if [[ ! $unknown_fields =~ ${key,,} ]]; then
+                    # limit field size to avoid choking jq on overly long strings
+                    [[ ${#value} -gt 1000 ]] && value="${value:0:997}..."
+                    record[${key,,}]="$value"
+                fi
+			done < <(jq -r ".[$count]"'|to_entries|map("\(.key)=\(.value|tostring|.[0:4000]|gsub("\n";"\\n"))")|.[]' ${updates})
+
+			# record current position
+			echo "${record['id']}" > ${update_last_id}
+			echo "${record['timelastmodified']}" > ${update_last_modified}
+
+			[[ $verbose -ge 2 ]] && {
+				echo "ID:       ${record['id']}";
+				echo "Author:   ${record['author']}";
+				echo "Title:    ${record['title']}";
+				echo "Modified: ${record['timelastmodified']}";
+				echo
+			}
+
+			keys=${!record[@]}
+			fields="$(get_current_fields)"
+
+			for key in "${!record[@]}"
+			do
+				columns+="${key},"
+				# quote values for SQ
+				value=${record[$key]}
+				value=${value//\\/\\\\}
+				value=${value//\'/\\\'}
+				values+="'$value',"
+				upsert+="${key} = values(${key}),"
+			done
+
+			
+
+			sql="insert into updated (${columns%?}) values(${values%?}) on duplicate key update ${upsert%?};"
+			echo "${sql}" >> ${update_sql}
+			[[ -n $sql_dump ]] && echo "${sql}" >> "${sql_dump}"
+
+			unset record
+			unset keys
+			unset values
+			unset columns
+			unset key
+			unset value
+			unset sql
+			unset upsert
+
+			let count+=1
+		done
+
+		[[ $no_action == 0 ]] && dbx < ${update_sql}
+	done 
+} 
+
+dbx () {
+	if [ $# -gt 0 ]; then
+		mysql -s -h ${dbhost} -P ${dbport} -u ${dbuser} ${db} -e "$@"
+	else
+		mysql -s -h ${dbhost} -P ${dbport} -u ${dbuser} ${db}
+	fi
+}
+
+get_current_fields () {
+	dbx 'describe updated;'|awk '{ print $1}'
+}
+
+# libgen_api ID LIMIT TIME_LAST_MODIFIED
+libgen_api () {
+	id="$1"
+	shift
+	limit="$1"
+	shift
+	last=$(date -d "$@" +'%Y-%m-%d%%20%H:%M:%S')
+
+	echo $last > /tmp/last
+
+	if [[ $? -gt 0 ]]; then
+		echo "date error: $@ is not a valid date"
+		exit
+	fi
+
+	curl -s ${api}?'fields=*&idnewer='${id}'&mode=newer&limit1='${limit}'&timenewer='${last}
+}
+
+# get_updates ID LIMIT TIME_LAST_MODIFIED
+get_updates () {
+	id="$1"
+	shift
+	limit="$1"
+	shift
+	last="$@"
+	libgen_api $id $limit "$last" > ${updates}
+	jq '.|length' ${updates} > ${update_count}
+}
+
+
+get_time_last_modified () {
+	dbx 'select MAX(TimeLastModified) FROM updated;'|tail -1
+}
+
+get_update_count () {
+	echo $(($(cat ${update_count})-1))
+}
+
+find_tool () {
+	tool=$(which "$1")
+	if [[ $? -gt 0 ]]; then
+		exit_with_error "missing program: $1; please install and try again"
+	fi
+}
+
+check_fields () {
+	current_fields="$(get_current_fields)"
+	updates_fields=($(libgen_api 1 2 '2000-01-01'|jq -r '.[0]|keys|@sh'))
+
+	# check for extra fields in api response
+	for index in ${!updates_fields[*]}; do
+		field=${updates_fields[$index]%\'}
+		field=${field#\'}
+		if [[ ! ${current_fields,,} =~ ${field,,} ]]; then
+            if [[ ! -v quiet ]]; then
+                echo "unknown field in api response: ${field} (consider refreshing database from dump)"
+            fi
+			unknown_fields+="${field,,} "
+		fi
+	done
+
+	# check for missing fields in api reponse
+	[[ $verbose -ge 1 ]] && {
+		echo "$current_fields" | while read field; do
+			if [[ ! -v quiet && ! ${updates_fields[*],,} =~ ${field,,} ]]; then
+				echo "missing field in api response: $field"
+			fi
+		done
+	}
+}
+
+check_sanity () {
+	find_tool "jq"
+	find_tool "awk"
+	find_tool "date"
+	find_tool "mysql"
+}
+
+cleanup () {
+	rm -rf ${tmpdir}
+    unlock
+}
+
+trap_error () {
+	cleanup
+	exit 1
+}
+
+trap_exit () {
+	cleanup
+	exit
+}
+
+_lock() {
+	flock -$1 $LOCKFD
+}
+
+_no_more_locking() {
+	_lock u
+	_lock xn && rm -f $LOCKFILE
+}
+
+_prepare_locking() {
+	eval "exec $LOCKFD>\"$LOCKFILE\""
+	trap _no_more_locking EXIT
+}
+
+exlock_now() {
+	_lock xn
+}
+
+exlock() {
+	_lock x
+}
+
+shlock() {
+	_lock s
+}
+
+unlock() {
+	_lock u
+}
+
+# echo error message to stdout and terminate main
+exit_with_error () {
+        echo "$*" >&2
+
+        kill -s TERM $TOP_PID
+}
+
+help () {
+	echo $(basename $(readlink -f $0)) "version $version"
+	cat <<- 'EOT'
+
+	Usage: update_libgen OPTIONS
+
+	    -l LIMIT	get updates in blocks of LIMIT entries
+	    -v		be verbose about what is being updated; repeat for more verbosity:
+	                -v: 	show basic info (number of updates, etc)
+	                -vv:	show ID, Title and TimeLastModified for each update
+	    -n		do not update database. Use together with -v or -vv to show
+	    		how many (-v) and which (-vv) titles would be updated.
+	    -j FILE	dump (append) json to FILE
+	    -s FILE	dump (append) sql to FILE
+	    -u URL	use URL to access the libgen API (overrides default)
+	    -t DATETIME	get updates since DATETIME (ignoring TimeLastModified in database)
+	     		use this option together with -s to create an sql update file to update
+	    		non-networked machines
+        -i ID       get updates from ID
+
+	    -H DBHOST	database host
+	    -P DBPORT	database port
+	    -U DBUSER	database user
+	    -p DBPASS	database password (use empty string to get a password prompt)
+	    -D DATABASE	database name
+
+	    -@		use tor (through torsocks) to connect to libgen API server
+	    -q		don't warn about missing fields in database or api response
+	    -h		this help message
+
+	EOT
+}
+
+_prepare_locking
+
+main "$@"
