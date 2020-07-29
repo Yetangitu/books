@@ -21,7 +21,7 @@ Publications can be downloaded by selecting them in the result list or by using 
 
 I'll let the programs themselves do the talking:
 
-```
+```txt
 $ books -h
 books version 0.5
 
@@ -158,7 +158,7 @@ Get data on a single publication using fast path MD5 search, show author, title 
   $ books -M 51b4ee7bc7eeb6ed7f164830d5d904ae -F author,title,extension
 ```
 
-```
+```txt
 $ update_libgen -h
 update_libgen version 0.5
 
@@ -190,7 +190,7 @@ Usage: update_libgen OPTIONS
     -h		this help message
 ```
 
-```
+```txt
 $ refresh_libgen -h
 refresh_libgen version 0.5
 
