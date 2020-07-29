@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 
-version="0.4"
-release="20161023"
+version="0.5"
+release="20200723"
 
 trap "trap_error" TERM
 trap "trap_exit" EXIT
+export TOP_PID=$$
 
 LOCKFILE="/var/lock/$(basename $0)"
 LOCKFD=99
+LC_ALL=C
 
 main () {
 
 	exlock_now || exit 1
 
 	# PREFERENCES
+	config=${XDG_CONFIG_HOME:-$HOME/.config}/books.conf
 
 	dbhost="localhost"
 	dbport="3306"
@@ -21,10 +24,17 @@ main () {
 	dbuser="libgen"
 	limit=1000
 
+
+	api="http://gen.lib.rus.ec/json.php"
+	#api="http://libgen.io/json.php"
+	#api="http://libgen.lc/json.php"
+	#api="http://libgen.unblocked.tv/json.php"
+
+        # source config file if it exists
+        [[ -f ${config} ]] && source ${config}
+
 	# (more or less) END OF PREFERENCES
 
-	api="http://libgen.io/json.php"
-	#api="http://libgen.unblocked.tv/json.php"
 	tmpdir=$(mktemp -d '/tmp/update_libgen.XXXXXX')
 	updates="${tmpdir}/updates"
 	update_count="${tmpdir}/update_count"
@@ -32,67 +42,84 @@ main () {
 	update_last_modified="${tmpdir}/update_last_modified"
 	update_last_id="${tmpdir}/update_last_id"
 
+	mysqlcmd="mysql -s --skip-column-names -N -B -h ${dbhost} -P ${dbport} -u ${dbuser} ${db}"
+
 	verbose=0
 	no_action=0
 	unknown_fields=""
 
-	while getopts "D:j:hH:i:l:np:P:qs:t:u:v@" OPTION
+	re_type='[a-z]+'
+	re_int='[0-9]+'
+	re_year='[0-9]{4}'
+	re_timestamp='[0-9]{4}-[0-9]{2}-[0-9]{2} [0-2][0-9]:[0-5][0-9]:[0-5][0-9]'
+
+	declare -A field_types="($(get_field_types))"
+	declare -A field_sizes="($(get_field_sizes))"
+
+	while getopts "a:D:j:hH:i:l:np:P:qs:t:u:v@" OPTION
 	do
-	case $OPTION in
-		j)
-			json_dump="${OPTARG}"
-			;;
-		s)
-			sql_dump="${OPTARG}"
-			;;
-		v)
-			let verbose+=1
-			;;
-		n)
-			no_action=1
-			;;
-		l)
-			limit="${OPTARG}"
-			if [[ $limit -le 1 ]]; then
-				echo "limit to low (-l ${limit}), minimum is 2"
+		case $OPTION in
+			j)
+				json_dump="${OPTARG}"
+				;;
+			s)
+				sql_dump="${OPTARG}"
+				;;
+			v)
+				let verbose+=1
+				;;
+			n)
+				no_action=1
+				;;
+			l)
+				limit="${OPTARG}"
+				if [[ $limit -le 1 ]]; then
+					echo "limit too low (-l ${limit}), minimum is 2"
+					exit
+				fi
+				;;
+			t)
+				startdatetime="${OPTARG}"
+				;;
+			i)
+				echo "${OPTARG}" > ${update_last_id}
+				;;
+			u)
+				api="${OPTARG}"
+				;;
+			H)
+				dbhost="${OPTARG}"
+				;;
+			P)
+				dbport="${OPTARG}"
+				;;
+			U)
+				dbuser="${OPTARG}"
+				;;
+			p)
+				dbpass="-p${OPTARG}"
+				;;
+			D)
+				db="${OPTARG}"
+				;;
+			a)
+				if url_available "${OPTARG}?fields=id&ids=0"; then
+					api="${OPTARG}"
+				else
+					exit_with_error "-a ${OPTARG}: API endpoint not available"
+				fi
+				;;
+			@)
+				use_torsocks=1
+				source $(which torsocks) on
+				;;
+			q)
+				quiet=1
+				;;
+			h)
+				help
 				exit
-			fi
-			;;
-		t)
-			startdatetime="${OPTARG}"
-			;;
-        i)
-            echo "${OPTARG}" > ${update_last_id}
-            ;;
-		u)
-			api="${OPTARG}"
-			;;
-		H)
-			dbhost="${OPTARG}"
-			;;
-		P)
-			dbport="${OPTARG}"
-			;;
-		U)
-			dbuser="${OPTARG}"
-			;;
-		p)
-			dbpass="-p${OPTARG}"
-			;;
-		D)
-			db="${OPTARG}"
-			;;
-		@)
-			use_torsocks=1
-			source $(which torsocks) on
-			;;
-        q)
-            quiet=1
-            ;;
-		h)
-			help
-			exit
-	esac
+		esac
 	done
 
 	check_sanity
@@ -104,8 +131,7 @@ main () {
 			last_update="$(cat ${update_last_modified})"
 			last_update_in_db="$(get_time_last_modified)"
 			if [[ $last_update != $last_update_in_db && $no_action == 0 ]]; then
-				echo "uh oh... something went wrong, last update in db does not equal last update from api response..."
-				exit
+				exit_with_error "uh oh... something went wrong, last update in db does not equal last update from api response..."
 			fi
 		elif [[ -n $startdatetime ]]; then
 			last_update="${startdatetime}"
@@ -113,7 +139,7 @@ main () {
 			last_update="$(get_time_last_modified)"
 		fi
 
-		last_id=$([[ -s ${update_last_id} ]] && cat ${update_last_id} || echo "1")
+		last_id=$([[ -s ${update_last_id} ]] && cat ${update_last_id} || get_max_id)
 
 		get_updates $last_id $limit "$last_update" 
 
@@ -145,40 +171,36 @@ main () {
 			while IFS="=" read -r key value
 			do
 				# drop unknown fields
-                if [[ ! $unknown_fields =~ ${key,,} ]]; then
-                    # limit field size to avoid choking jq on overly long strings
-                    [[ ${#value} -gt 1000 ]] && value="${value:0:997}..."
-                    record[${key,,}]="$value"
-                fi
+				if [[ ! $unknown_fields =~ ${key,,} ]]; then
+					# limit field size to avoid choking jq on overly long strings
+					[[ ${#value} -gt 1000 ]] && value="${value:0:997}..."
+					record[${key,,}]="$value"
+				fi
 			done < <(jq -r ".[$count]"'|to_entries|map("\(.key)=\(.value|tostring|.[0:4000]|gsub("\n";"\\n"))")|.[]' ${updates})
 
 			# record current position
 			echo "${record['id']}" > ${update_last_id}
 			echo "${record['timelastmodified']}" > ${update_last_modified}
 
-			[[ $verbose -ge 2 ]] && {
+			if [[ $verbose -ge 2 ]]; then
 				echo "ID:       ${record['id']}";
 				echo "Author:   ${record['author']}";
 				echo "Title:    ${record['title']}";
 				echo "Modified: ${record['timelastmodified']}";
 				echo
-			}
+			fi
 
 			keys=${!record[@]}
-			fields="$(get_current_fields)"
 
-			for key in "${!record[@]}"
-			do
+			for key in "${!record[@]}"; do
 				columns+="${key},"
-				# quote values for SQ
 				value=${record[$key]}
-				value=${value//\\/\\\\}
-				value=${value//\'/\\\'}
+				if [ -n "$value" ]; then
+					value=$(sanitize_field "$key" "$value")
+				fi
 				values+="'$value',"
 				upsert+="${key} = values(${key}),"
 			done
-
-			
 
 			sql="insert into updated (${columns%?}) values(${values%?}) on duplicate key update ${upsert%?};"
 			echo "${sql}" >> ${update_sql}
@@ -197,19 +219,79 @@ main () {
 		done
 
 		[[ $no_action == 0 ]] && dbx < ${update_sql}
-	done 
+	done
 } 
 
 dbx () {
 	if [ $# -gt 0 ]; then
-		mysql -s -h ${dbhost} -P ${dbport} -u ${dbuser} ${db} -e "$@"
+		$mysqlcmd -e "$@"
 	else
-		mysql -s -h ${dbhost} -P ${dbport} -u ${dbuser} ${db}
+		$mysqlcmd 
 	fi
 }
 
 get_current_fields () {
-	dbx 'describe updated;'|awk '{ print $1}'
+	dbx 'describe updated;'|awk '{ print tolower($1)}'
+}
+
+get_field_type () {
+	dbx 'show fields from updated where field="'$1'";'|awk '{print $2}'
+}
+
+get_field_types () {
+	get_current_fields|while read field; do
+		fieldtype=$(get_field_type "$field")
+		[[ "$fieldtype" =~ $re_type ]]
+		echo -n "[$field]=${BASH_REMATCH[0]} "
+	done
+}
+
+get_field_sizes () {
+	get_current_fields|while read field; do
+		fieldtype=$(get_field_type "$field")
+		[[ "$fieldtype" =~ $re_int ]]
+		if [[ "${BASH_REMATCH[0]}" -gt 0 ]]; then
+			echo -n "[$field]=${BASH_REMATCH[0]} "
+		fi
+	done
+}
+
+# sanitize_field FIELD VALUE
+sanitize_field () {
+	field=$1
+	shift
+	value="$*"
+
+	# quote values for SQL
+	value=${value//\\/\\\\}
+	value=${value//\'/\\\'}
+
+	# field-type specific filters
+	case "${field_types[$field]}" in
+		int|bigint)
+			[[ "$value" =~ $re_int ]]
+			value=${BASH_REMATCH[0]}
+			value=${value:0:${field_sizes[$field]}}
+			;;
+		char|varchar)
+			value=${value:0:${field_sizes[$field]}}
+			;;
+		timestamp)
+			[[ "$value" =~ $re_timestamp ]]
+			value=${BASH_REMATCH[0]}
+			;;
+	esac
+
+	# field-specific filters
+	case "$field" in
+		year)
+			# filter out Chinese date stamps
+			[[ "$value" =~ $re_year ]]
+			value=${BASH_REMATCH[0]}
+			;;
+	esac
+
+	echo -n "$value"
 }
 
 # libgen_api ID LIMIT TIME_LAST_MODIFIED
@@ -246,6 +328,10 @@ get_time_last_modified () {
 	dbx 'select MAX(TimeLastModified) FROM updated;'|tail -1
 }
 
+get_max_id () {
+	dbx 'select MAX(id) FROM updated;'|tail -1
+}
+
 get_update_count () {
 	echo $(($(cat ${update_count})-1))
 }
@@ -266,10 +352,13 @@ check_fields () {
 		field=${updates_fields[$index]%\'}
 		field=${field#\'}
 		if [[ ! ${current_fields,,} =~ ${field,,} ]]; then
-            if [[ ! -v quiet ]]; then
-                echo "unknown field in api response: ${field} (consider refreshing database from dump)"
-            fi
+			if [[ ! -v quiet ]]; then
+				echo "unknown field in api response: ${field} (consider refreshing database from dump)"
+			fi
 			unknown_fields+="${field,,} "
+		else
+			#active_fields[${field}]="$(get_field_type ${field})"
+			:
 		fi
 	done
 
@@ -283,11 +372,18 @@ check_fields () {
 	}
 }
 
+url_available () {
+        url="$1"
+
+	curl --output /dev/null --silent --fail -r 0-0 "$url"
+}
+
 check_sanity () {
 	find_tool "jq"
 	find_tool "awk"
 	find_tool "date"
 	find_tool "mysql"
+	find_tool "curl"
 }
 
 cleanup () {
@@ -337,7 +433,7 @@ unlock() {
 
 # echo error message to stdout and terminate main
 exit_with_error () {
-        echo "$*" >&2
+	echo "$(basename $0): $*" >&2
 
         kill -s TERM $TOP_PID
 }
@@ -360,7 +456,7 @@ help () {
 	    -t DATETIME	get updates since DATETIME (ignoring TimeLastModified in database)
 	     		use this option together with -s to create an sql update file to update
 	    		non-networked machines
-        -i ID       get updates from ID
+	    -i ID       get updates from ID
 
 	    -H DBHOST	database host
 	    -P DBPORT	database port
@@ -368,6 +464,7 @@ help () {
 	    -p DBPASS	database password (use empty string to get a password prompt)
 	    -D DATABASE	database name
 
+	    -a APIHOST	use APIHOST as API server
 	    -@		use tor (through torsocks) to connect to libgen API server
 	    -q		don't warn about missing fields in database or api response
 	    -h		this help message

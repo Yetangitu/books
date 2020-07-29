@@ -5,11 +5,12 @@ trap "trap_error" TERM
 trap "trap_clean" EXIT
 export TOP_PID=$$
 
-version="0.4"
-release="20161023"
+version="0.5"
+release="20200723"
 
 main () {
 	# PREFERENCES
+	config=${XDG_CONFIG_HOME:-$HOME/.config}/books.conf
 
 	# target directory for downloaded publications
 	target_directory="${HOME}/Books"
@@ -35,11 +36,14 @@ main () {
 	filename_add_md5=0
 
 	# tool preferences, list preferred tool first
-	gui_tools="yad|zenity"
+	gui_tools="zenity|yad"
 	tui_tools="dialog|whiptail"
 	dl_tools="curl|wget"
-	parser_tools="hxwls|xidel|hxwls"
-	pager_tools="less|more"
+	parser_tools="xidel|hxwls"
+	pager_tools="less|more|cat"
+
+	# don't use a pager when not running in a tty
+	[ ! -t 1 ] && pager_tools="cat" 
 	
 
 	# database names to use:
@@ -68,7 +72,6 @@ main () {
 		[d]=edition
 		[e]=extension
 		[l]=language
-		[m]=md5
 		[y]=year
 		[s]=series
 		[p]=publisher
@@ -82,16 +85,38 @@ main () {
 		[n]=asin
 		[q]=openlibraryid
 		[b]=identifierwodash
+		[m]=md5
 	)
 
+	# base url for covers
 	declare -A coverurl=(
-		[libgen]='http://libgen.io/covers'
-		[libgen_fiction]='http://libgen.io/fictioncovers'
+		[libgen]='http://93.174.95.29/covers'
+		[libgen_fiction]='http://93.174.95.29/fictioncovers'
 	)
+
+	# torrent archives
+	declare -A torrenturl=(
+		[libgen]='http://gen.lib.rus.ec/repository_torrent'
+		[libgen_fiction]='http://gen.lib.rus.ec/fiction/repository_torrent'
+	)
+
+	# torrent file name prefixes
+	declare -A torrentprefix=(
+		[libgen]='r'
+		[libgen_fiction]='f'
+	)
+
+        # source config file if it exists
+        [[ -f ${config} ]] && source ${config}
 
 	# (mostly) END OF PREFERENCES
 
-	# display columns for yad and zenity
+	# user agent string generator
+	declare -a adjective=(white red blue pink green brown dark light big small tiny earth glass air space forest lake sea ground fire crunchy spicy boring zonked blasted stoned fried flattened stretched smelly ugly obnoxious irritating whiny lazy)
+	declare -a critter=(goat frog hound fish lizard gator moose monkey whale hippo fox bird weasel owl cow pig hog donkey duck chicken dino sloth snake iguana gecko)
+	user_agent="Mozilla/5.0 ($(uname -s)) ${adjective[$(($RANDOM%${#adjective[*]}))]^}${critter[$(($RANDOM%${#critter[*]}))]^}/${RANDOM:0:3}.${RANDOM:0:1}.${RANDOM:0:4}.${RANDOM:0:2}"
+
+	# display columns for yad, zenity and pager
 	declare -A zenity_columns=(
 		[libgen]="--column Download --column MD5 --column Title --column Author --column Year --column Edition --column Publisher --column Language --column Topic --column Size --column Format --hide-column=2"
 		[libgen_fiction]="--column Download --column MD5 --column Title --column Author --column Year --column Edition --column Publisher --column Language --column Size --column Format --column Path --hide-column=2"
@@ -102,11 +127,20 @@ main () {
 		[libgen_fiction]="--column  Download  --column  MD5:HD  --column  Title  --column  Author  --column  Year:NUM  --column  Edition  --column  Publisher  --column  Language  --column  Size:NUM  --column  Format  --column  Path --column Info:HD  --search-column=3 --print-column=2 --tooltip-column=12"
 	)
 
+	declare -A pager_columns=(
+		[libgen]="Title,Author,Year,Edition,Publisher,Language,Topic_descr,Filesize,Extension,Locator,MD5"
+		[libgen_fiction]="Title,Author,Year,Edition,Publisher,Language,Commentary,Filesize,Extension,Path,MD5"
+	)
+
 	# query output filter for different purposes
 	declare -A filters=(
 		[search]="cat"
 		[xsearch]="sed -e 's/&/&amp;/g'"
 		[filename]="sed -e 's/[^-[:alnum:]:;?!.,+@#%]/_/g;s/^\([-_]\)*//'"
+		[dirname]="sed -e 's/[^-[:alnum:]:;?!/.,+@#%]/_/g;s/^\([-_]\)*//'"
+		[id]="cat"
+		[extension]="cat"
+		[attributes]="cat"
 		[preview_dialog]="cat"
 		[preview_whiptail]="cat"
 		[preview_yad]="sed -e 's/&/&amp;/g'"
@@ -114,8 +148,9 @@ main () {
 	)
 
 	# GETOPT config
-	search_options='@('$(echo ${!schema[@]}|tr ' ' '|')'|'$(echo ${!schema[@]}|tr ' ' '|'|tr '[[:lower:]]' '[[:upper:]]')')'
-	search_getopts="$(echo ${!schema[@]}|tr ' ' ':'):$(echo ${!schema[@]}|tr ' ' ':'|tr '[[:lower:]]' '[[:upper:]]'):"
+	# remove captital M from options (tr -d 'm ') to allow it to be used for fast path search
+	search_options='@('$(echo ${!schema[@]}|tr ' ' '|')'|'$(echo ${!schema[@]}|tr -d 'm '|tr ' ' '|'|tr '[[:lower:]]' '[[:upper:]]')')'
+	search_getopts="$(echo ${!schema[@]}|tr ' ' ':'):$(echo ${!schema[@]}|tr -d 'm '|tr ' ' ':'|tr '[[:lower:]]' '[[:upper:]]'):"
 
 	# X11-related config
 	if xset q &>/dev/null; then
@@ -127,6 +162,7 @@ main () {
 
 	# defines program behaviour to a large extent
 	program=$(basename "$0")
+	db="${programs[$program]}"
 
 	# arrays
 	declare -a query_result
@@ -140,6 +176,7 @@ main () {
 	clauses=""
 	fields=""
 	opt_fields=""
+	show_fields=""
 	query=""
 	no_update=0
 
@@ -147,7 +184,6 @@ main () {
 
 	# this contains the columns in the current database, used to filter out unsupported search fields
 	current_fields="$(get_current_fields)"
-
 
 	# set ui_tool in order of preference (first found wins)
 	case "$program" in
@@ -164,39 +200,90 @@ main () {
 
 	# PROCESS OPTIONS AND BUILD QUERY
 
-	while getopts ":${search_getopts}fhkx:#:@w" OPTION
+	while getopts ":${search_getopts}fF:hkx#:@wuU:=:j:M:$" OPTION
 	do
-	case $OPTION in
-	$search_options)
-		add_clause "${OPTION}" "${OPTARG}"
-		;;
+		case $OPTION in
+			$search_options)
+				add_clause "${OPTION}" "${OPTARG}"
+				;;
 
-	h)
-		help
-		exit
-		;;
-	k)
-		create_symlinks
-		exit
-		;;
-	f)
-		fulltext=1
-		;;
-	x)
-		no_update=1
-		;;
-	'#')
-		limit="${OPTARG}"
-		;;
-	w)
-		preview=1
-		;;
-	@)
-		use_torsocks=1
-		source $(which torsocks) on
-		;;
-	esac
+			h)
+				help
+				exit
+				;;
+			k)
+				create_symlinks
+				exit
+				;;
+			f)
+				fulltext=1
+				;;
+			F)
+				if [[ "$program" =~ ^books|^fiction ]]; then
+					show_fields="${OPTARG}"
+					# test for non-existent fields
+					get_fields > /dev/null
+				else
+					exit_with_error "-F FIELDS only works with _books_ and _fiction_"
+				fi
+				;;
+			x)
+				no_update=1
+				;;
+			'#')
+				limit="${OPTARG}"
+				;;
+			w)
+				preview=1
+				;;
+			u)
+				get_torrent=1
+				;;
+			U)
+				get_torrentpath "${OPTARG}"
+				exit
+				;;
+			j)
+				get_filename "${OPTARG}"
+				exit
+				;;
+			M)
+				md5_fast_path=1
+				md5="${OPTARG}"
+				query="and md5='${md5}'"
+				pager_tools="cat"
+				;;
+			@)
+				use_torsocks=1
+				source $(which torsocks) on
+				;;
+			=)
+				if [ -d "${OPTARG}" ]; then
+					target_directory="${OPTARG}"
+				else
+					exit_with_error "Directory ${OPTARG} does not exist"
+				fi
+				;;
+			$)
+				use_deep_path=1
+				;;
+
+		esac
 	done
+
+	# fast path handling - get data on a single publication using MD5
+	if [[ "$md5_fast_path" -gt 0 ]]; then
+		case "$program" in
+			books|fiction)
+				sql=$(prepare_sql $db "attributes")
+				run_query "$db" "attributes" "$sql"
+				list_${ui_tool} $preview
+				exit
+				;;
+			*)
+				exit_with_error "-M MD5 (fast path search) only works in _books_ and _fiction_"
+		esac
+	fi
 
 	# shift out options
 	shift $((${OPTIND}-1))
@@ -234,12 +321,12 @@ main () {
 		fi
 	fi
 
+	[[ -z ${query} && -z ${opt_pattern} ]] && exit_with_error "Empty query"
+
 	window_title="$query $clauses"
 	window_title=${window_title/and /}
 
 	# RUN QUERY AND PROCESS RESULTS
-
-	db="${programs[$program]}"
 
 	# update database before performing query
 	case "$program" in
@@ -259,21 +346,21 @@ main () {
 
 	case "$program" in
 
-	# this searches both the normal 'updated' table as well as the 'updated_ocr' and 'updated_edited' tables
+	# this searches both the normal 'updated' table as well as the 'updated_edited' table
 	books-all)
 		sql=$(prepare_sql $db "search_all" $ui_tool)
 		run_query "$db" "search" "$sql"
 		list_${ui_tool} $preview
 		;;
 
-	books|nbook|xbook|nfiction|xfiction)
+	books|nbook|xbook|fiction|nfiction|xfiction)
 		if [[ ${program:0:1} == "x" ]]; then
 			filter="xsearch"
 		else
 			filter="search"
 		fi
 		sql=$(prepare_sql $db "search" $ui_tool)
-		run_query "$db" $filter "$sql"
+		run_query "$db" "$filter" "$sql"
 		list_${ui_tool} $preview
 		;;
 
@@ -290,8 +377,7 @@ main () {
 
 	# default
 	*)
-		echo "unknown program: $program"
-		exit 1
+		exit_with_error "unknown program: $program"
 		;;
 	esac
 
@@ -327,10 +413,22 @@ download () {
 	shift
 	for md5 in $@; do
 
-		filename=$(get_filename $db $md5)
+		if [[ -n $get_torrent ]]; then
+			dl_torrent ${db} ${md5}
+		else
 
-		if [[ -n $filename ]]; then
-			dl_src_${db} ${md5} "${filename}"
+			filename=$(get_attr 'filename' $db $md5)
+			if [[ -n $filename ]]; then
+				if [[ -n $use_deep_path ]]; then
+					dirname=$(get_attr 'dirname' $db $md5)
+					if [[ -n $dirname ]]; then
+						mkdir -p "${target_directory}/${dirname}"
+						filename="${dirname}/${filename}"
+					fi
+				fi
+
+				dl_src_${db} ${md5} "${filename}"
+			fi
 		fi
 	done
 }
@@ -354,12 +452,12 @@ get_file () {
 
 	case $dl_tool in
 	curl)
-		curl -L -o "$target_directory/$filename" "${url}" 2>${tmpdir}/progress &
+		curl --user-agent "$user_agent" -L -o "$target_directory/$filename" "${url}" 2>${tmpdir}/progress &
 		echo $! >${tmpdir}/dl_pid
 		;;
 
 	wget)
-		wget -O "$target_directory/$filename" "${url}" -o ${tmpdir}/progress --progress=bar:force &
+		wget --user-agent "$user_agent" -O "$target_directory/$filename" "${url}" -o ${tmpdir}/progress --progress=bar:force &
 		echo $! >${tmpdir}/dl_pid
 		;;
 	*)
@@ -411,38 +509,57 @@ dl_src_libgen () {
 	md5="$1"
 	shift
 	filename="$*"
+	db='libgen'
 
-	parser=$(find_tool "$parser_tools")
+	url="http://93.174.95.29/main/$(get_torrent ${db} ${md5})/${md5,,}/placeholder"
 
-	if [[ $parser == "xidel" ]]; then
-		#url=$(xidel -s http://libgen.io/ads.php?md5=${md5} -e "<a>{@href}<h2>DOWNLOAD</h2></a>");
-        url=$(xidel -s http://libgen.io/ads.php?md5=${md5} -e '//h2[text()="DOWNLOAD"]/ancestor::*[@href][1]/@href');
-		#[[ -n $url ]] && url=http://libgen.io${url}
-	elif [[ $parser == "hxwls" ]]; then
-		url=$(hxwls 'http://libgen.io/ads.php?md5='${md5}|grep get.php|head -1)
+	if ! url_available "$url"; then
+
+		url=""
+		parser=$(find_tool "$parser_tools")
+
+		if [[ $parser == "xidel" ]]; then
+			url=$(xidel --user-agent "$user_agent" -s "http://93.174.95.29/main/${md5}" -e '//td[@id="info"]/h2/a/@href');
+		elif [[ $parser == "hxwls" ]]; then
+			url=$(hxwls 'http://93.174.95.29/main/'${md5}|head -2|tail -1)
+		fi
 	fi
 
-	[[ -n $url ]] && get_file "'${filename}'" "${url}"
+	[[ -n "$url" ]] && get_file "'${filename}'" "${url}"
 }
 
 dl_src_libgen_fiction () {
 	md5="$1"
 	shift
 	filename="$*"
+	db='libgen_fiction'
 
-    parser=$(find_tool "$parser_tools")
+	extension=$(get_attr 'extension' 'libgen_fiction' ${md5})
+	url="http://93.174.95.29/fiction/$(get_torrent ${db} ${md5})/${md5,,}.${extension,,}/placeholder"
 
-    if [[ $parser == "xidel" ]]; then
-        url=$(xidel -s http://libgen.io/foreignfiction/ads.php?md5=${md5} -e '//h2[text()="DOWNLOAD"]/ancestor::*[@href][1]/@href');
-    elif [[ $parser == "hxwls" ]]; then
-        url=$(hxwls 'http://libgen.io/foreignfiction/ads.php?md5='${md5}|grep get.php|head -1)
-    fi
+	if ! url_available "$url"; then
 
-    [[ -n $url ]] && get_file "'${filename}'" "${url}"
+		url=""
+		parser=$(find_tool "$parser_tools")
 
-    # the old way, does not seem to work anymore
-	#base="http://libgen.io/foreignfiction/get.php?md5="
-	#get_file "'${filename}'" "${base}${md5}"
+		if [[ $parser == "xidel" ]]; then
+			url=$(xidel --user-agent "$user_agent" -s http://93.174.95.29/fiction/${md5} -e '//td[@id="info"]/h2/a/@href');
+		elif [[ $parser == "hxwls" ]]; then
+			url=$(hxwls 'http://93.174.95.29/fiction/'${md5}|head -2|tail -1)
+		fi
+	fi
+
+	[[ -n $url ]] && get_file "'${filename}'" "${url}"
+}
+
+dl_torrent () {
+	db="$1"
+	md5="$2"
+	torrent="${torrentprefix[$db]}_$(get_torrent ${db} ${md5}).torrent"
+
+	url="${torrenturl[$db]}/${torrent}"
+
+	[[ -n $url ]] && get_file "'${torrent}'" "${url}"
 }
 
 create_symlinks () {
@@ -476,7 +593,7 @@ get_current_fields () {
 		dbx $db "describe $table;"|awk '{print $1}'| tr '[:upper:]' '[:lower:]'
 	done
 }
-	
+
 get_time_last_modified () {
         dbx $db 'select MAX(TimeLastModified) FROM updated;'
 }
@@ -509,6 +626,12 @@ add_clause () {
 
 	if [[ $current_fields =~ ${schema[${option}]} ]]; then
 		if [[ -n $pattern ]]; then
+			# escape ' " \ % _
+			pattern=${pattern//\\/\\\\}
+			pattern=${pattern//\'/\\\'}
+			pattern=${pattern//\"/\\\"}
+			pattern=${pattern//%/\\%}
+			pattern=${pattern//_/\\_}
 			[[ ! $opt_pattern =~ $pattern ]] && opt_pattern+=" $pattern"
 			case "${option}" in
 			[[:lower:]])
@@ -546,25 +669,76 @@ run_query () {
 	done < <(echo "$sql"|mysql -Bssss -h ${dbhost} -P ${dbport} -u $dbuser $db|(eval ${filters[$filter]}))
 }
 
-get_filename () {
-	db="$1"
-	md5="$2"
+get_attr () { 
+	role="$1"
+	db="$2"
+	md5="$3"
 
-	if [[ $filename_add_md5 -gt 0 ]]; then
-		role="filename_md5"
-	else
-		role="filename"
+	# special case for filename with md5
+	if [[ "$role" == 'filename' && $filename_add_md5 -gt 0 ]]; then
+		role='filename_md5'
 	fi
-	
-	sql=$(prepare_sql $db $role)
 
-	run_query "$db" "filename" "${sql}"
+	sql=$(prepare_sql ${db} ${role})
+
+	run_query "${db}" "${role}" "${sql}"
 
 	if [[ ${#query_result[@]} -gt 0 ]]; then
 		echo "${query_result[0]}"
 	fi
 }
-	
+
+url_available () {
+	url="$1"
+	dl_tool=$(find_tool "$dl_tools")
+
+	case "$dl_tool" in
+		curl)
+			curl --output /dev/null --silent --fail -r 0-0 "$url"
+			;;
+		wget)
+			wget -q --spider "$url"
+			;;
+		*)
+			exit_with_error "unknown download tool ${dl_tool}"
+			;;
+	esac
+}
+
+get_torrent () {
+	db="$1"
+	md5="$2"
+
+	id=$(get_attr 'id' ${db} ${md5})
+
+	[[ -n "$id" ]] && echo "$((${id}-${id}%1000))"
+}
+
+get_filename () {
+	md5="$1"
+	db="${programs[$program]}"
+
+	filename=$(get_attr "filename" "$db" "$md5")
+
+	[[ -n "$filename" ]] && echo "$filename"
+}
+
+get_torrentpath () {
+	md5="$1"
+	db="${programs[$program]}"
+
+	torrent=$(get_torrent "$db" "$md5")
+	[[ -n "$torrent" ]] && echo "$torrent/$md5"
+}
+
+get_attributes () {
+	md5="$1"
+	db="${programs[$program]}"
+	role="attributes"
+
+	get_attr "$role" "$db" "$md5"
+}
+
 # leave <br> and <pre> to enable some simple formatting tasks
 strip_html () {
 	#echo "$*"|sed -e 's/<br>/\n/g;s/<[^>]*>//g;s/\n/<br>/g'
@@ -589,7 +763,7 @@ preview_dialog () {
 		sql=$(prepare_sql $db "preview" $ui_tool)
 		run_query "$db" "preview_dialog" "${sql}"
 		if [[ ${#query_result[@]} -gt 0 ]]; then
-			filename=$(get_filename $db $md5)
+			filename=$(get_attr 'filename' $db $md5)
 			exec 3>&1
 			dialog_result=$(dialog --backtitle "${program} - preview" --colors --cr-wrap --no-collapse --extra-button --ok-label "Download" --extra-label "Skip" --no-cancel --yesno \
 "\Z1Author\Zn: ${query_result[0]}
@@ -619,7 +793,7 @@ preview_whiptail () {
 		sql=$(prepare_sql $db "preview" $ui_tool)
 		run_query $db "preview_whiptail" "${sql}"
 		if [[ ${#query_result[@]} -gt 0 ]]; then
-			filename=$(get_filename $db $md5)
+			filename=$(get_attr 'filename' $db $md5)
 			exec 3>&1
 			whiptail_result=$(whiptail --backtitle "${program} - preview" --yes-button "Download" --no-button "Skip" --nocancel --yesno \
 "Author: ${query_result[0]}
@@ -650,8 +824,9 @@ preview_zenity () {
 		sql=$(prepare_sql $db "preview" $ui_tool)
 		run_query "$db" "preview_zenity" "${sql}"
 		if [[ ${#query_result[@]} -gt 0 ]]; then
-			filename=$(get_filename $db $md5)
+			filename=$(get_attr 'filename' $db $md5)
 			info="<table><tr><td><b>Author</b>:</td><td colspan='5'>${query_result[0]}</td></tr><tr><td><b>Title</b>:</td><td colspan='5'>${query_result[1]}</td></tr><tr><td><b>Volume</b>:</td><td>${query_result[2]}</td><td><b>Series</b>:</td><td>${query_result[3]}</td><td><b>Edition</b>:</td><td>${query_result[4]}</td></tr><tr><td><b>Year</b>:</td><td>${query_result[5]}</td><td><b>Publisher</b>:</td><td>${query_result[6]}</td></tr><tr><td><b>Language</b>:</td><td>${query_result[7]}</td><td><b>Size</b>:</td><td>${query_result[8]}</td><td><b>Type</b>:</td><td>${query_result[9]}</td></tr><tr><td><b>OLID</b>:</td><td>${query_reslt[10]}</td><td><b>ISBN</b>:</td><td>${query_result[11]}</td><td><b>MD5</b>:</td><td>${md5^^}</td></tr></table><span style='font-size:x-small;'><pre>${filename}</pre></span><hr><table><tr><td style='width:25%;'><img style='width:95%;' src='${coverurl[$db]}/${query_result[13]}'></td><td style='vertical-align:top;'>$(strip_html ${query_result[12]})</td></tr></table>"
+			echo "$info" > /tmp/info
 			zenity_result=$(echo "$info"|zenity --width $x_size --height $y_size --text-info --html --ok-label "Download" --cancel-label "Skip" --filename=/dev/stdin 2>/dev/null)
 			if [[ $? -eq 0 ]]; then
 				dl_src_${db} ${md5} "${filename}"
@@ -668,8 +843,9 @@ preview_yad () {
 		
                 run_query "$db" "preview_yad" "${sql}"
                 if [[ ${#query_result[@]} -gt 0 ]]; then
-                        filename=$(get_filename $db $md5)
+                        filename=$(get_attr 'filename' $db $md5)
                         info="<table><tr><td><b>Author</b>:</td><td colspan='5'>${query_result[0]}</td></tr><tr><td><b>Title</b>:</td><td colspan='5'>${query_result[1]}</td></tr><tr><td><b>Volume</b>:</td><td>${query_result[2]}</td><td><b>Series</b>:</td><td>${query_result[3]}</td><td><b>Edition</b>:</td><td>${query_result[4]}</td></tr><tr><td><b>Year</b>:</td><td>${query_result[5]}</td><td><b>Publisher</b>:</td><td>${query_result[6]}</td></tr><tr><td><b>Language</b>:</td><td>${query_result[7]}</td><td><b>Size</b>:</td><td>${query_result[8]}</td><td><b>Type</b>:</td><td>${query_result[9]}</td></tr><tr><td><b>OLID</b>:</td><td>${query_reslt[10]}</td><td><b>ISBN</b>:</td><td>${query_result[11]}</td><td><b>MD5</b>:</td><td>${md5^^}</td></tr></table><span style='font-size:x-small;'><pre>${filename}</pre></span><hr><table><tr><td style='width:25%;'><img style='width:95%;' src='${coverurl[$db]}/${query_result[13]}'></td><td style='vertical-align:top;'>$(strip_html ${query_result[12]})</td></tr></table>"
+			echo "$info" > /tmp/info
                         yad_result=$(echo "$info"|yad --width $x_size --height $y_size --html --button='gtk-cancel:1' --button='Download!filesave!Download this publication:0' --filename=/dev/stdin 2>/dev/null)
 			yad_return=$?
                         if [[ $yad_return -eq 0 ]]; then
@@ -762,13 +938,37 @@ list_zenity () {
 
 # SQL
 
+get_fields () {
+	db="${programs[$program]}"
+	[[ -z "$show_fields" ]] && show_fields="${pager_columns[$db]}"
+	IFS=',' read -ra fields <<< "$show_fields"
+	result=""
+
+        for field in "${fields[@]}"; do
+		[[ ! "${current_fields[*],,}" =~ ${field,,} ]] && exit_with_error "no such field: $field"
+		if [ "$db" == "libgen" ]; then
+			if [ "${field,,}" == "topic_descr" ]; then
+				table="t."
+			else
+				table="u."
+			fi
+		else
+			table=""
+		fi
+		result+="${result:+,}greatest(${table}${field}, '-')"
+	done
+
+	echo -n "$result"
+}
+
+
 prepare_sql () {
 	db="$1"
 	role="$2"
 	ui_tool="$3"
 
-	# SQL for:
-	# building filenames...
+	# SQL to:
+	# build filenames...
 
 	declare -A sql_filename=(
 		[libgen]="select concat_ws('.',concat_ws('-', Series, Author, Title, Year, Publisher, language), extension) from updated where md5='${md5}' limit 1;"
@@ -780,7 +980,31 @@ prepare_sql () {
 		[libgen_fiction]="select (case length(concat_ws('_',AuthorName1,AuthorFamily1,AuthorSurname1)) when 2 then substring_index(path,'\\\\',-1) else concat_ws('.',concat_ws('-',concat_ws('_',AuthorName1,AuthorFamily1,AuthorSurname1),title,MD5),extension) end) as filename from main where md5='${md5}' limit 1;"
 	)
 
-	# publication preview...
+	# build directory names...
+	declare -A sql_dirname=(
+		[libgen]="select concat_ws('/', 'nonfiction',language, Author) as dirname from updated where md5='${md5}' limit 1;"
+		[libgen_fiction]="select (case length(concat_ws('_',AuthorName1,AuthorFamily1,AuthorSurname1)) when 2 then 'fiction' else concat_ws('/','fiction',Language,concat_ws('_',nullif(AuthorFamily1, ''),nullif(AuthorSurname1,''),nullif(AuthorName1,'')),nullif(Series1,''),nullif(Series2,''))end) as dirname from main where md5='${md5}' limit 1;"
+	)
+
+	# get id
+	declare -A sql_id=(
+		[libgen]="select id from updated where md5='${md5}' limit 1;"
+		[libgen_fiction]="select id from main where md5='${md5}' limit 1;"
+	)
+
+	# get extension
+	declare -A sql_extension=(
+		[libgen]="select extension from updated where md5='${md5}' limit 1;"
+		[libgen_fiction]="select extension from main where md5='${md5}' limit 1;"
+	)
+
+	# get attributes
+	declare -A sql_attributes=(
+		[libgen]="select $(get_fields) from updated as u left join topics as t on u.topic=t.topic_id and t.lang='${language}' where md5='${md5}' limit 1;"
+		[libgen_fiction]="select $(get_fields) from (select Title, concat('_', AuthorFamily1, AuthorName1, AuthorSurname1, AuthorFamily2, AuthorName2, AuthorSurname2) as Author, Year,Edition,Publisher,language,Commentary,filesize, extension, path, md5 from main) as inner_table where md5='${md5}' limit 1;"
+	)
+
+	# preview publication...
 	
 	declare -A sql_preview_dialog=(
 		[libgen]="select greatest(Author, '-'), greatest(Title, '-'), greatest(VolumeInfo, '-'), greatest(Series, '-'), greatest(Edition, '-'), greatest(Year, '-'), greatest(Publisher, '-'), greatest(language, '-'), greatest(filesize, '-'), greatest(extension, '-'), greatest(OpenLibraryID, '-'), greatest(IdentifierWODash, '-'), greatest(ifnull(descr,'-'), '-'), Coverurl from updated left join description on updated.md5=description.md5 where updated.md5='${md5}' limit 1;"
@@ -799,11 +1023,11 @@ prepare_sql () {
 		[libgen_fiction]="select concat_ws(',', concat_ws('_',AuthorFamily1, AuthorName1, AuthorSurname1), concat_ws('_',AuthorFamily2, AuthorName2, AuthorSurname2)), greatest(Title,'-'), '-', greatest(Series1,'-'), greatest(Edition,'-'), greatest(Year,'-'), greatest(Publisher,'-'), greatest(Language,'-'), greatest(Filesize,'-'), greatest(Extension,'-'), '-',greatest(Identifier,'-'),concat_ws('<br><br>',Path, Commentary), concat_ws('.',concat_ws('/', if(id<1000,0,insert(id,(length(id)-2),3,'000')),md5),'jpg') from main where md5='${md5}' limit 1;"
 	)
 
-	# main search...
+	# search...
 
 	declare -A sql_search_pager=(
-		[libgen]="select greatest(u.Title,'-'), greatest(u.Author,'-'),greatest(u.Year,'-'),greatest(u.Edition,'-'),greatest(u.Publisher,'-'),greatest(u.Language,'-'), greatest(t.Topic_descr,'-'), greatest(u.Filesize,'-'), greatest(u.Extension,'-'), greatest(u.Filename,'-'), greatest(u.MD5,'-') from updated as u left join topics as t on u.topic=t.topic_id and t.lang='${language}' where TRUE ${query} ${clauses} ${sql_limit};"
-		[libgen_fiction]="select greatest(Title,'-'), greatest(Author,'-'),greatest(Year,'-'),greatest(Edition,'-'),greatest(Publisher,'-'),greatest(Language,'-'), greatest(Commentary,'-'), greatest(Filesize,'-'), greatest(Extension,'-'), greatest(Filename,'-'), greatest(MD5,'-') from (select Title, concat('_', AuthorFamily1, AuthorName1, AuthorSurname1, AuthorFamily2, AuthorName2, AuthorSurname2) as Author, Year,Edition,Publisher,language,Commentary,filesize, extension, path as locator, md5 from main) as inner_table where TRUE ${query} ${clauses} ${sql_limit};"
+		[libgen]="select $(get_fields) from updated as u left join topics as t on u.topic=t.topic_id and t.lang='${language}' where TRUE ${query} ${clauses} ${sql_limit};"
+		[libgen_fiction]="select $(get_fields) from (select Title, concat('_', AuthorFamily1, AuthorName1, AuthorSurname1, AuthorFamily2, AuthorName2, AuthorSurname2) as Author, Year,Edition,Publisher,language,Commentary,filesize, extension, path, md5 from main) as inner_table where TRUE ${query} ${clauses} ${sql_limit};"
 	)
 
 	declare -A sql_search_dialog=(
@@ -824,7 +1048,7 @@ prepare_sql () {
 	)
 
 	declare -A sql_search_all_pager=(
-		[libgen]="(select u.Title, u.Author,u.Year,u.Edition,u.Publisher,u.language,ifnull(t.Topic_descr, '-'), u.Filesize, u.Extension, u.Filename, md5 from updated as u left join topics as t on u.topic=t.topic_id and t.lang='${language}' where TRUE ${query} ${clauses} ${sql_limit}) UNION (select u.Title, u.Author,u.Year,u.Edition,u.Publisher,u.language,t.Topic_descr,u.Filesize, u.Extension, u.Filename, u.md5 from updated_edited as u left join topics as t on u.topic=t.topic_id and t.lang='${language}' where TRUE ${query} ${clauses} ${sql_limit}) UNION (select u.Title, u.Author,u.Year,u.Edition,u.Publisher,u.language,t.Topic_descr,u.Filesize, u.Extension, u.Filename, u.md5 from updated_ocr as u left join topics as t on u.topic=t.topic_id and t.lang='${language}' where TRUE ${query} ${clauses} ${sql_limit});"
+		[libgen]="(select u.Title, u.Author,u.Year,u.Edition,u.Publisher,u.language,ifnull(t.Topic_descr, '-'), u.Filesize, u.Extension, u.Locator, md5 from updated as u left join topics as t on u.topic=t.topic_id and t.lang='${language}' where TRUE ${query} ${clauses} ${sql_limit}) UNION (select u.Title, u.Author,u.Year,u.Edition,u.Publisher,u.language,t.Topic_descr,u.Filesize, u.Extension, u.Locator, u.md5 from updated_edited as u left join topics as t on u.topic=t.topic_id and t.lang='${language}' where TRUE ${query} ${clauses} ${sql_limit});"
 	)
 
 	if [[ -n $ui_tool ]]; then
@@ -838,7 +1062,7 @@ prepare_sql () {
 
 # echo error message to stdout and terminate main
 exit_with_error () {
-	echo "$*" >&2
+	echo "$(basename $0): $*" >&2
 
 	kill -s TERM $TOP_PID
 }
@@ -899,7 +1123,11 @@ help () {
 	EOF
 
 	for key in "${!schema[@]}"; do
-		echo "    -${key}, -${key^^}	search on ${schema[$key]^^}"
+		if [ "$key" == "m" ]; then
+			echo "    -${key}		search on ${schema[$key]^^}"
+		else
+			echo "    -${key}, -${key^^}	search on ${schema[$key]^^}"
+		fi
 	done
 
 	cat <<- 'EOF'
@@ -915,6 +1143,18 @@ help () {
 	 		double-clicking a result row also shows a preview irrespective of this option,
 	 		but this only works when using the yad gui tool
 
+	    -u		download torrent instead of actual publication
+
+	    -U MD5	print torrent path (torrent#/md5) for given MD5
+
+	    -j MD5	print filename for given MD5
+
+	    -M MD5	fast path search on md5, only works in _books_ and _fiction_
+	    		can be combined with -F FIELDS to select fields to be shown
+	    		output goes directly to the terminal (no pager)
+
+	    -F FIELDS	select which fields to show in pager output
+
 	    -# LIMIT	limit search to LIMIT hits (default: 1000)
 
 	    -k		install symlinks for all program invocations
@@ -926,6 +1166,7 @@ help () {
 	    		torsocks before using this option; try this in case your ISP
 	    		(or a transit provider somewhere en-route) blocks access to libgen
 
+	    -= DIR	set download location to DIR
 
 	EXAMPLES
 
@@ -940,21 +1181,37 @@ help () {
 	Do an exact search on the Title field for 'The Odyssey' and the Author field for 'Homer', showing
 	the result in the terminal
 
-	  $ books -T 'the odyssey' -A 'homer'
+	  $ books -T 'The Odyssey' -A 'Homer'
 
 	Do the same search as above, showing the results in a list on the terminal with checkboxes to select
 	one or more publications for download
 
-	  $ nbook -T 'the odyssey' -A 'homer'
+	  $ nbook -T 'The Odyssey' -A 'Homer'
 
-	The same as above, this time with an X11-based interface
+	A case-insensitive pattern search using an X11-based interface
 
-	  $ xbook -T 'the odyssey' -A 'homer'
+	  $ xbook -t 'the odyssey' -a 'homer'
 
 	Do a fulltext search over the Title, Author, Series, Periodical and Publisher fields, showing the
 	results in a terminal-based checklist for download after preview (-w)
 
 	  $ nbook -w -f -t -a -s -r -p 'odyssey'
+
+	Walk over a directory of publications, compute md5 and use this to generate file names:
+
+	  $ find /path/to/publications -type f|while read f; do books -j $(md5sum "$f"|awk '{print $1}');done
+
+	As above, but print torrent number and path in torrent file
+
+	  $ find /path/to/publications -type f|while read f; do books -U $(md5sum "$f"|awk '{print $1}');done
+
+	Find publications by author 'thucydides' and show their md5,title and year in the terminal
+
+	  $ books -a thucydides -F md5,title,year
+
+	Get data on a single publication using fast path MD5 search, show author, title and extension
+
+	  $ books -M 51b4ee7bc7eeb6ed7f164830d5d904ae -F author,title,extension
 	
 
 	EOF
