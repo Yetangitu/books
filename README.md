@@ -200,6 +200,7 @@ Performs a refresh from a database dump file for the chosen libgen databases.
 
     -n		do not refresh database
  		use together with '-v' to check if recent dumps are available
+    -f		force refresh, use this on first install
     -v		be verbose about what is being updated
     -d DAYS	only use database dump files no older than DAYS days (default: 5)
     -u DBS	refresh DBS databases (default: compact fiction main)
@@ -219,9 +220,9 @@ Performs a refresh from a database dump file for the chosen libgen databases.
 
 ##Installation
 
-Download this repository and copy the three scripts - books, update_libgen and refresh_libgen - into a directory which is somewhere on your $PATH ($HOME/bin would be a good spot).
+Create a database on a mysql server somewhere within reach of the intended host. Either open *books* in an editor to configure the database details (look for `CONFIGURE ME` below) and anything else (eg. `target_directory` for downloaded books, `max_age` before update, `language` for topics, MD5 in filenames, tools, etc) or add these settings to the (optional) config file `books.conf` in $XDG_CONFIG_HOME (usually $HOME/.config):
 
-You can either open books in an editor to configure the database details (look for `CONFIGURE ME` below) and anything else (eg. `target_directory` for downloaded books, `max_age` before update, `language` for topics, MD5 in filenames, tools, etc) or add these settings to the (optional) config file `books.conf` in $XDG_CONFIG_HOME (usually $HOME/.config):
+Download this repository and copy the three scripts - books, update_libgen and refresh_libgen - into a directory which is somewhere on your $PATH ($HOME/bin would be a good spot).
 
 ```
 main () {

@@ -73,17 +73,24 @@ main () {
 
 	tmpdir=$(mktemp -d /var/tmp/libgen.XXXXXX)
 
-	while getopts "a:d:hH:knp:P:qu:v@" OPTION
+	while getopts "a:d:fhH:knp:P:qu:v@" OPTION
 	do
 	case $OPTION in
 		n)
 			no_action=1
 			;;
+		f)
+			force_refresh=1
+			;;
 		d)
 			max_age=${OPTARG}
 			;;
 		u)
-			dbs+=" ${OPTARG}"
+			if [[ -v "databases[${OPTARG}]" ]]; then
+				dbs+=" ${OPTARG}"
+			else
+				exit_with_error "-u ${OPTARG}: no such database"
+			fi
 			;;
 		v)
 			verbose="_verbose"
@@ -204,7 +211,7 @@ is_available () {
 # drop tables to prepare database for refresh
 drop_table_sql () {
         database="$1"
-        dbx "$database" "SELECT concat('DROP TABLE IF EXISTS ', table_name, ';') FROM information_schema.tables WHERE table_schema = '$dbname';"
+	dbx "$database" "SELECT concat('DROP TABLE IF EXISTS ', table_name, ';') FROM information_schema.tables WHERE table_schema = '$dbname';"
 }
 
 # returns database name if it exists, nothing otherwise
@@ -216,9 +223,15 @@ db_exists () {
 # return database age in days
 db_age () {
 	db="$1"
-	db_last_modified=$(date -d "$(dbx $database ${lastmodified[$db]})" +%s)
 	now=$(date +%s)
-	echo $(((${now}-${db_last_modified})/60/60/24))
+	age=0
+	if [[ "$force_refresh" -gt 0 ]]; then
+		age=$max_age
+	else
+		db_last_modified=$(date -d "$(dbx $database ${lastmodified[$db]})" +%s)
+		age=$(((${now}-${db_last_modified})/60/60/24))
+	fi
+	echo -n $age
 }
 
 # run sed script on dump file
@@ -317,7 +330,7 @@ trap_exit () {
 
 # echo error message to stdout and terminate main
 exit_with_error () {
-        echo "$*" >&2
+	echo "$(basename $0): $*" >&2
 
         kill -s TERM $TOP_PID
 }
@@ -332,6 +345,7 @@ help () {
 
 	    -n		do not refresh database
 	 		use together with '-v' to check if recent dumps are available
+	    -f		force refresh, use this on first install
 	    -v		be verbose about what is being updated
 	    -d DAYS	only use database dump files no older than DAYS days (default: ${max_age})
 	    -u DBS	refresh DBS databases (default: ${!databases[@]})
