@@ -428,7 +428,7 @@ see man transmission-remote for more info on supported commands
 
 CONFIGURATION FILES
 
-    /home/frank/.config/tm.conf
+    /home/username/.config/tm.conf
 
 tm can be configured by editing the script itself or the configuration file:
 
