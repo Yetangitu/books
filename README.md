@@ -275,19 +275,19 @@ Copies file from libgen/libgen_fiction torrent to correct location and name
 ###The torrent helper script interface
 The torrent helper script (here named `ttool`) needs to support the following commands:
 
-* ttool add-selective <torrent_file> <md5>
+* `ttool add-selective <torrent_file> <md5>`
   download file <md5> from torrent <torrent_file>
-* ttool torrent-hash <torrent_file>
+* `ttool torrent-hash <torrent_file>`
   get btih (info-hash) for <torrent_file>
-* ttool torrent-files <torrent_file>
+* `ttool torrent-files <torrent_file>`
   list files in <torrent_file>
-* ttool remove <btih>
+* `ttool remove <btih>`
   remove active torrent with info-hash <btih>
-* ttool ls <btih>
+* `ttool ls <btih>`
   show download status for active torrent with info-hash <btih>
-* ttool info <btih>
+* `ttool info <btih>`
   show extensive info (files, peers, etc) for torrent with info-hash <btih>
-* ttool active <btih>
+* `ttool active <btih>`
   return `true` if the torrent is active, `false` otherwise
 
 Output should be the requested data without any headers or other embellishments. Here is an example using the (included) `tm` helper script for the *transmission-daemon* torrent client, showing all required commands:
