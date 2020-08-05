@@ -4,13 +4,13 @@ shopt -s extglob
 
 export TOP_PID=$$
 
-version="0.1"
-release="20200730"
+version="0.1.2"
+release="20200805"
 
 main () {
 	config=${XDG_CONFIG_HOME:-$HOME/.config}/tm.conf
 	netrc=~/.tm-netrc
-	tm_host="localhost:4081"
+	tm_host="localhost:9091"
 	# source config file if it exists
         [[ -f ${config} ]] && source ${config}
 
@@ -79,7 +79,11 @@ main () {
 # commands
 
 tm_cmd () {
-        transmission-remote "$tm_host" -N "$netrc" "$@"
+	if [[ -n $(which transmission-remote) ]]; then
+		transmission-remote "$tm_host" -N "$netrc" "$@"
+	else
+		exit_with_error "transmission-remote not found, please install it first (apt install transmission-cli)"
+	fi
 }
 
 tm_help () {
