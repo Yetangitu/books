@@ -2,7 +2,7 @@
 #
 # refresh libgen databases from dump files
 
-version="0.6"
+version="0.6.1"
 release="20200805"
 
 trap "trap_error" TERM
@@ -77,7 +77,7 @@ main () {
 
 	tmpdir=$(mktemp -d /var/tmp/libgen.XXXXXX)
 
-	while getopts "cd:fhH:knp:P:R:u:U:v@" OPTION
+	while getopts "cd:efhH:knp:P:R:u:U:v@" OPTION
 	do
 	case $OPTION in
 		n)
@@ -126,6 +126,18 @@ main () {
 			else
 				exit_with_error "-c: config file ${config} exists, either remove it or edit it directly"
 			fi
+			exit
+			;;
+		e)
+			if [[ -f "$config" ]]; then
+				if [[ "$VISUAL" ]]; then "$VISUAL" "$config";
+				elif [[ "$EDITOR" ]]; then "$EDITOR" "$config";
+				else exit_with_error "-e: no editor configured, can not edit $config"
+				fi
+			else
+				exit_with_error "-e: config file does not exist, create is first (see -c)"
+			fi
+			exit
 			;;
 		a)
 			if url_available "${OPTARG}"; then
@@ -361,6 +373,7 @@ help () {
 	    -U DBUSER	database user (${dbuser})
 	    -R REPO	dump repository (${base})
 	    -c 		create a config file using current settings (see -H, -P, -U, -R)
+	    -e		edit config file
 
 	    -p DBPASS	database password (cache password for this session)
 	 		use empty string ("") to get password prompt
