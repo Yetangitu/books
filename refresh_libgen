@@ -2,8 +2,8 @@
 #
 # refresh libgen databases from dump files
 
-version="0.5"
-release="20200723"
+version="0.6"
+release="20200805"
 
 trap "trap_error" TERM
 trap "trap_exit" EXIT
@@ -29,7 +29,7 @@ main () {
 
 	# database names
 	declare -A databases=(
-		[main]=libgen
+		[libgen]=libgen
 		[compact]=libgen_compact
 		[fiction]=libgen_fiction
 	)
@@ -41,16 +41,21 @@ main () {
 
 	# urls for dump files (minus datestamp and extension)
 	declare -A urls=(
-		[main]="${base}/libgen"
+		[libgen]="${base}/libgen"
 		[compact]="${base}/libgen_compact"
 		[fiction]="${base}/fiction"
 	)
 
 	# sql to get time last modified for database
 	declare -A lastmodified=(
-		[main]="select max(timelastmodified) from updated;"
+		[libgen]="select max(timelastmodified) from updated;"
 		[compact]="select max(timelastmodified) from updated;"
-		[fiction]="select max(timelastmodified) from main;"
+		[fiction]="select max(timelastmodified) from fiction;"
+	)
+
+	declare -A filter=(
+		[libgen]='s/DEFINER[ ]*=[ ]*[^*]*\*/\*/;s/DEFINER[ ]*=[ ]*[^*]*PROCEDURE/PROCEDURE/;s/DEFINER[ ]*=[ ]*[^*]*FUNCTION/FUNCTION/'
+		[compact]='s/DEFINER[ ]*=[ ]*[^*]*\*/\*/;s/DEFINER[ ]*=[ ]*[^*]*PROCEDURE/PROCEDURE/;s/DEFINER[ ]*=[ ]*[^*]*FUNCTION/FUNCTION/'
 	)
 
 	# sql to run BEFORE update
@@ -59,7 +64,6 @@ main () {
 
 	# sql to run AFTER update
 	declare -A after_update=(
-		[main]="drop trigger libgen_description_update_all; drop trigger libgen_updated_delete_all; drop trigger libgen_updated_update_all; drop trigger libgen_updated_insert_all; drop trigger md5_all_ins; drop trigger md5_all_del; drop trigger updated_edited;drop trigger updated_edited_before_upd_tr;drop trigger updated_edited_before_ins_tr; drop trigger hashes_before_upd_tr; drop trigger hashes_before_ins_tr; drop trigger description_edited_before_upd_tr; drop trigger description_edited_before_ins_tr; drop trigger description_edited; drop trigger description_before_ins_tr;"
 		[compact]="drop trigger updated_edited;create table description (id int(11) not null auto_increment, md5 varchar(32) not null default '', descr varchar(20000) not null default '', toc mediumtext not null, TimeLastModified timestamp not null default current_timestamp on update current_timestamp, primary key (id), unique key md5_unique (md5) using btree, key time (timelastmodified) using btree, key md5_hash (md5) using hash);"
 	)
 
@@ -73,7 +77,7 @@ main () {
 
 	tmpdir=$(mktemp -d /var/tmp/libgen.XXXXXX)
 
-	while getopts "a:d:fhH:knp:P:qu:v@" OPTION
+	while getopts "cd:fhH:knp:P:R:u:U:v@" OPTION
 	do
 	case $OPTION in
 		n)
@@ -111,8 +115,17 @@ main () {
 				echo
 			fi
 			;;
-		q)
-			dbpass="-p"
+		c)
+			if [[ ! -f "${config}" ]]; then
+				cat <<-EOT > "${config}"
+				dbhost=${dbhost}
+				dbport=${dbport}
+				dbuser=${dbuser}
+				base=${base}
+				EOT
+			else
+				exit_with_error "-c: config file ${config} exists, either remove it or edit it directly"
+			fi
 			;;
 		a)
 			if url_available "${OPTARG}"; then
@@ -154,13 +167,14 @@ main () {
 				if [[ -z ${no_action} ]]; then
 					wget ${options[wget${verbose}]} ${db_dump}
 					unrar ${options[unrar${verbose}]} x $(basename ${db_dump})
-					correct_database_name $(unrar lb $(basename ${db_dump})) ${database}
+					[[ -n "${filter[$db]}" ]] && run_filter $(unrar lb $(basename ${db_dump})) "${filter[$db]}"
 					drop_tables=$(drop_table_sql "${database}")
 					[[ -n $drop_tables ]] && dbx ${database} "${drop_tables}"
 					[[ -n ${before_update[$db]} ]] && dbx ${database} "${before_update[$db]}"
+					[[ -n ${filter[$db]} ]] && filter_command="|sed -e '${filter[$db]}'"
 					if [[ -n $verbose ]]; then
 						echo "importing $(basename ${db_dump}) into ${database}"
-						pv $(unrar lb $(basename ${db_dump}))| dbx ${database}
+						pv $(unrar lb $(basename ${db_dump})) | dbx ${database}
 					else
 						dbx ${database} < $(unrar lb $(basename ${db_dump}))
 					fi
@@ -234,22 +248,14 @@ db_age () {
 	echo -n $age
 }
 
-# run sed script on dump file
-db_dump_edit () {
+# run filter on dump
+run_filter () {
 	dump_file="$1"
-	sed_command="$2"
+	filter="$2"
 	if [[ -n $verbose ]]; then
-		echo "running '$sed_command' on '$dump_file'"
+		echo "running '$filter' on '$dump_file'"
 	fi
-	sed -i -e "$sed_command" "$dump_file"
-}
-
-# correct database name in dump file
-correct_database_name () {
-	dump_file="$1"
-	database="$2"
-	db_dump_edit "$dump_file" '1,50 s/^CREATE DATABASE .*/CREATE DATABASE IF NOT EXISTS '"$database"' DEFAULT CHARACTER SET utf8;/'
-	db_dump_edit "$dump_file" '1,50 s/^USE .*/USE '"$database"';/'
+	sed -i -e "$filter" "$dump_file"
 }
 
 # find tool, returns the first|one|found, exit with error message if none found
@@ -350,14 +356,15 @@ help () {
 	    -d DAYS	only use database dump files no older than DAYS days (default: ${max_age})
 	    -u DBS	refresh DBS databases (default: ${!databases[@]})
 
-	    -H DBHOST	database host (default: ${dbhost})
-	    -P DBPORT	database port (default: ${dbport})
-	    -U DBUSER	database user (default: ${dbuser})
+	    -H DBHOST	database host (${dbhost})
+	    -P DBPORT	database port (${dbport})
+	    -U DBUSER	database user (${dbuser})
+	    -R REPO	dump repository (${base})
+	    -c 		create a config file using current settings (see -H, -P, -U, -R)
+
 	    -p DBPASS	database password (cache password for this session)
 	 		use empty string ("") to get password prompt
-	    -q		prompt for password on each database invocation
-	 		safer (password not visible in ps) but less convenient
-	    -a REPO	set dump repository to REPO
+
 	    -@		use tor (through torsocks) to connect to libgen server
 	    -k		keep downloaded files after exit
 	    -h		this help message

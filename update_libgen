@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-version="0.5"
-release="20200723"
+version="0.6"
+release="20200805"
 
 trap "trap_error" TERM
 trap "trap_exit" EXIT
@@ -53,8 +53,13 @@ main () {
 	re_year='[0-9]{4}'
 	re_timestamp='[0-9]{4}-[0-9]{2}-[0-9]{2} [0-2][0-9]:[0-5][0-9]:[0-5][0-9]'
 
+	declare -a tables="(description hashes updated)"
+	declare -A current_fields="($(get_current_fields))"
 	declare -A field_types="($(get_field_types))"
 	declare -A field_sizes="($(get_field_sizes))"
+	declare -A columns=()
+	declare -A values=()
+	declare -A upsert=()
 
 	while getopts "a:D:j:hH:i:l:np:P:qs:t:u:v@" OPTION
 	do
@@ -74,8 +79,7 @@ main () {
 			l)
 				limit="${OPTARG}"
 				if [[ $limit -le 1 ]]; then
-					echo "limit too low (-l ${limit}), minimum is 2"
-					exit
+					exit_wit_error "limit too low (-l ${limit}), minimum is 2"
 				fi
 				;;
 			t)
@@ -164,12 +168,11 @@ main () {
 
 		updcnt=$(get_update_count)
 		count=0
-		> ${update_sql}
+		echo "start transaction;" > ${update_sql}
 
 		while [ $count -le $updcnt ]; do
 			declare -A record
-			while IFS="=" read -r key value
-			do
+			while IFS="=" read -r key value; do
 				# drop unknown fields
 				if [[ ! $unknown_fields =~ ${key,,} ]]; then
 					# limit field size to avoid choking jq on overly long strings
@@ -192,31 +195,53 @@ main () {
 
 			keys=${!record[@]}
 
+			md5="${record[md5]}"
+
+			# split fields between tables
 			for key in "${!record[@]}"; do
-				columns+="${key},"
+				table=${current_fields[$key]}
+				columns[$table]+="${key},"
 				value=${record[$key]}
 				if [ -n "$value" ]; then
 					value=$(sanitize_field "$key" "$value")
 				fi
-				values+="'$value',"
-				upsert+="${key} = values(${key}),"
+				values[$table]+="'$value',"
+				upsert[$table]+="${key} = values(${key}),"
 			done
 
-			sql="insert into updated (${columns%?}) values(${values%?}) on duplicate key update ${upsert%?};"
+			# add md5 to secondary tables (all but the last)
+			for n in $(seq 0 $((${#tables[@]}-2))); do
+				table="${tables[$n]}"
+				if [[ -n "${columns[$table]}" ]]; then
+					columns[$table]+="md5,"
+					values[$table]+="'$md5',"
+					upsert[$table]+="md5 = values(md5),"
+				fi
+			done
+
+			# main table (last in tables array) first
+			for n in $(seq $((${#tables[@]}-1)) -1 0); do
+				table="${tables[$n]}"
+				if [[ -n "${columns[$table]}" ]]; then
+					sql+="insert into $table (${columns[$table]%?}) values(${values[$table]%?}) on duplicate key update ${upsert[$table]%?};"
+				fi
+			done
 			echo "${sql}" >> ${update_sql}
 			[[ -n $sql_dump ]] && echo "${sql}" >> "${sql_dump}"
 
 			unset record
 			unset keys
-			unset values
-			unset columns
 			unset key
 			unset value
 			unset sql
-			unset upsert
+			columns=()
+			values=()
+			upsert=()
 
 			let count+=1
 		done
+
+		echo "commit;" >> ${update_sql}
 
 		[[ $no_action == 0 ]] && dbx < ${update_sql}
 	done
@@ -231,15 +256,19 @@ dbx () {
 }
 
 get_current_fields () {
-	dbx 'describe updated;'|awk '{ print tolower($1)}'
+	for table in ${tables[@]}; do
+		dbx "describe $table;"|awk '{print "["tolower($1)"]='$table'"}'
+	done
 }
 
 get_field_type () {
-	dbx 'show fields from updated where field="'$1'";'|awk '{print $2}'
+	field="$1"
+	table="${current_fields[$field]}"
+	dbx "show fields from $table where field=\"$field\";"|awk '{print $2}'
 }
 
 get_field_types () {
-	get_current_fields|while read field; do
+	for field in ${!current_fields[@]}; do
 		fieldtype=$(get_field_type "$field")
 		[[ "$fieldtype" =~ $re_type ]]
 		echo -n "[$field]=${BASH_REMATCH[0]} "
@@ -247,7 +276,7 @@ get_field_types () {
 }
 
 get_field_sizes () {
-	get_current_fields|while read field; do
+	for field in ${!current_fields[@]}; do
 		fieldtype=$(get_field_type "$field")
 		[[ "$fieldtype" =~ $re_int ]]
 		if [[ "${BASH_REMATCH[0]}" -gt 0 ]]; then
@@ -305,8 +334,7 @@ libgen_api () {
 	echo $last > /tmp/last
 
 	if [[ $? -gt 0 ]]; then
-		echo "date error: $@ is not a valid date"
-		exit
+		exit_with_error "date error: $@ is not a valid date"
 	fi
 
 	curl -s ${api}?'fields=*&idnewer='${id}'&mode=newer&limit1='${limit}'&timenewer='${last}
@@ -344,27 +372,27 @@ find_tool () {
 }
 
 check_fields () {
-	current_fields="$(get_current_fields)"
 	updates_fields=($(libgen_api 1 2 '2000-01-01'|jq -r '.[0]|keys|@sh'))
+	db_fields="${!current_fields[@]}"
+	db_fields="${db_fields,,}"
 
 	# check for extra fields in api response
-	for index in ${!updates_fields[*]}; do
-		field=${updates_fields[$index]%\'}
-		field=${field#\'}
-		if [[ ! ${current_fields,,} =~ ${field,,} ]]; then
+	for index in ${!updates_fields[@]}; do
+		field="${updates_fields[$index]%\'}"
+		field="${field#\'}"
+		if [[ ! $db_fields =~ ${field,,} ]]; then
 			if [[ ! -v quiet ]]; then
 				echo "unknown field in api response: ${field} (consider refreshing database from dump)"
 			fi
 			unknown_fields+="${field,,} "
 		else
-			#active_fields[${field}]="$(get_field_type ${field})"
 			:
 		fi
 	done
 
 	# check for missing fields in api reponse
 	[[ $verbose -ge 1 ]] && {
-		echo "$current_fields" | while read field; do
+		for field in ${!current_fields[@]}; do
 			if [[ ! -v quiet && ! ${updates_fields[*],,} =~ ${field,,} ]]; then
 				echo "missing field in api response: $field"
 			fi
@@ -388,7 +416,7 @@ check_sanity () {
 
 cleanup () {
 	rm -rf ${tmpdir}
-    unlock
+	unlock
 }
 
 trap_error () {
@@ -433,7 +461,7 @@ unlock() {
 
 # echo error message to stdout and terminate main
 exit_with_error () {
-	echo "$(basename $0): $*" >&2
+	echo -e "$(basename $0): $*" >&2
 
         kill -s TERM $TOP_PID
 }
