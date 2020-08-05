@@ -209,7 +209,7 @@ Usage: update_libgen OPTIONS
 
 ```txt
 $ refresh_libgen -h
-refresh_libgen version 0.6
+refresh_libgen version 0.6.1
 
 Usage: refresh_libgen OPTIONS
 
@@ -227,6 +227,7 @@ Performs a refresh from a database dump file for the chosen libgen databases.
     -U DBUSER	database user (libgen)
     -R REPO	dump repository (http://gen.lib.rus.ec/dbdumps/)
     -c 		create a config file using current settings (see -H, -P, -U, -R)
+    -e		edit config file
 
     -p DBPASS	database password (cache password for this session)
  		use empty string ("") to get password prompt
@@ -238,14 +239,15 @@ Performs a refresh from a database dump file for the chosen libgen databases.
 
 ##Torrents, direct download...
 
-*Books* (et al) can download files either from torrents or from one of the libgen download mirrors. To limit the load on the download servers it is best to use torrents whenever possible. The latest publications are not yet available through torrents since those are only created for batches of 1000 publications. The feasibility of torrent download also depends on whether the needed torrents are seeded. Publications which can not be downloaded through torrents can be downloaded directly.
+*Books* (et al) can download files either from torrents (using `-u y` or `-u 1`) or from one of the libgen download mirrors (default, use`-u n` or `-u 0` in case torrent download is set as default). To limit the load on the download servers it is best to use torrents whenever possible. The latest publications are not yet available through torrents since those are only created for batches of 1000 publications. The feasibility of torrent download also depends on whether the needed torrents are seeded. Publications which can not be downloaded through torrents can be downloaded directly.
 
 ###Torrent download process
 Torrent download works by selecting individual files for download from the 'official' torrents, i.e. it is *not* necessary to download the whole torrent for a single publication. This process is automated by means of a helper script which is used to interface *books* with a torrent client. Currently the only torrent client for which a helper script is available is *transmission-daemon*, the script uses the related *transmission-remote* program to interface with the daemon. Writing a helper script should not be that hard for other torrent clients as long as these can be controlled through the command line or via an API.
 
-When downloading through torrents *books* first tries to download the related torrent file from the 'official' repository, if this fails it gives up and suggests using direct download instead. Once the torrent file has been downloaded it is checked to see whether it contains the required file. If this check passes the torrent is submitted to the torrent client with only the required file selected for download. A job script is created which can be used to control the torrent job. This script is optionally (depending on the torrent_cron_job parameter in the PREFERENCES section or the config file) submitted as a cron job. The task of this script is to copy the downloaded file from the torrent client download directory (preference: torrent_download_directory) to the target directory (preference: target_directory) under the correct name. Once the torrent has finished downloading the job script will copy the file to that location and remove the cron job. If torrent_cron_job is not set (or is set to 0) the job script can be called 'by hand' to copy the file, it can also be called to perform other tasks like retrying the download from a libgen download mirror server (use -D, this will cancel the torrent and cron job for this file). Here is its help message:
+When downloading through torrents *books* first tries to download the related torrent file from the 'official' repository, if this fails it gives up and suggests using direct download instead. Once the torrent file has been downloaded it is checked to see whether it contains the required file. If this check passes the torrent is submitted to the torrent client with only the required file selected for download. A job script is created which can be used to control the torrent job, if the `torrent_cron_job` parameter in the PREFERENCES section or the config file is set to `1` it is submitted as a cron job. The task of this script is to copy the downloaded file from the torrent client download directory (`torrent_download_directory` in books.conf or the PREFERENCES section) to the target directory (preference `target_directory`) under the correct name. Once the torrent has finished downloading the job script will copy the file to that location and remove the cron job. If `torrent_cron_job` is not set (or is set to `0`) the job script can be called 'by hand' to copy the file, it can also be used to perform other tasks like retrying the download from a libgen download mirror server (use `-D`, this will cancel the torrent and cron job for this file) or to retry the torrent download (use `-R`). The script has the following options:
 
 ```txt
+$ XYZ.job -h
 Use: bash jobid.job [-s] -[i] [-r] [-R] [-D] [-h] [torrent_download_directory]
 
 Copies file from libgen/libgen_fiction torrent to correct location and name
@@ -278,7 +280,7 @@ The torrent helper script (here named `ttool`) needs to support the following co
 * ttool active <btih>
   return `true` if the torrent is active, `false` otherwise
 
-Output should be the requested data without any headers or explanation. Here is an example using the (included) `tm` helper script for the *transmission-daemon* torrent client, showing all required commands:
+Output should be the requested data without any headers or other embellishments. Here is an example using the (included) `tm` helper script for the *transmission-daemon* torrent client, showing all required commands:
 
 ```txt
 $ tm torrent-files r_2412000.torrent 
@@ -311,15 +313,32 @@ $ tm info 6934f632c06a91572b4401e5b4c96eec89d311d7
 $ tm active 6934f632c06a91572b4401e5b4c96eec89d311d7; echo "torrent is $([[ $? -gt 0 ]] && echo "not ")active"
 torrent is active
 
+$ if tm active 6934f632c06a91572b4401e5b4c96eec89d311d7; then echo "torrent is active"; fi
+torrent is active
+
 $ tm active d34db33f; echo "torrent is $([[ $? -gt 0 ]] && echo "not ")active"
 torrent is not active
 ```
 
 ##Installation
+Download this repository (or a tarball) and copy the four scripts - `books`, `update_libgen`, `refresh_libgen` and `tm` (only needed when using the transmission-daemon torrent client) - into a directory which is somewhere on your $PATH ($HOME/bin would be a good spot). Run `books -k`to create symlinks to the various names under which the program can be run:
 
-Create a database on a mysql server somewhere within reach of the intended host. Either open *books* in an editor to configure the database details (look for `CONFIGURE ME` below) and anything else (eg. `target_directory` for downloaded books, `max_age` before update, `language` for topics, MD5 in filenames, tools, etc) or add these settings to the (optional) config file `books.conf` in $XDG_CONFIG_HOME (usually $HOME/.config):
+* `books`
+* `books-all`
+* `fiction`
+* `nbook`
+* `xbook`
+* `nfiction`
+* `xfiction`
 
-Download this repository and copy the three scripts - books, update_libgen and refresh_libgen - into a directory which is somewhere on your $PATH ($HOME/bin would be a good spot).
+Create a database on a mysql server somewhere within reach of the intended host. Either open *books* in an editor to configure the database details (look for `CONFIGURE ME` below) and anything else (eg. `target_directory` for downloaded books, `max_age` before update, `language` for topics, MD5 in filenames, tools, etc) or add these settings to the (optional) config file `books.conf` in $XDG_CONFIG_HOME (usually $HOME/.config). The easiest way to create the config file is to run `refresh_libgen` with the required options. As an example, the following command sets the database server to `base.example.org`, the database port to `3306` and the database username to `genesis`:
+
+```bash
+$ refresh_libgen -H base.example.org -P 3306 -U genesis -c`
+```
+
+Make sure to add the `-c` option *at the end* of the command or it won't work. Once the config file has been created it can be edited 
+
 
 ```bash
 main () {
@@ -383,7 +402,7 @@ main () {
         )
 ```
 
-The same goes for the 'PREFERENCES' sections in update_libgen and refresh_libgen. In most cases the only parameters which might need change are `dbhost`, `dbuser`, `torrent_download_directory` and possibly `torrent_tools`. Since all programs use a common `books.conf` config file it is usually sufficient to add these parameters there:
+The same goes for the 'PREFERENCES' sections in `update_libgen` and `refresh_libgen`. In most cases the only parameters which might need change are `dbhost`, `dbuser`, `torrent_download_directory` and possibly `torrent_tools`. Since all programs use a common `books.conf` config file it is usually sufficient to add these parameters there:
 
 ```bash
 $ cat $HOME/.config/books.conf
@@ -424,9 +443,9 @@ These tools have the following dependencies (apart from a locally available libg
 * all: bash 4.x or higher - the script relies on quite a number of bashisms
 
 
-* books: less | more (use less!)
-* nbook/nfiction: dialog | whiptail (whiptail is buggy, use dialog!)
-* xbook/xfiction: yad | zenity (more functionality with yad, but make sure your yad supports --html - you might have to build it yourself (use --enable-html during ./configure). If in doubt about the how and why of this, just use Zenity)
+* `books`/`fiction`: less | more (use less!)
+* `nbook`/`nfiction`: dialog | whiptail (whiptail is buggy, use dialog!)
+* `xbook`/`xfiction`: yad | zenity (more functionality with yad, but make sure your yad supports --html - you might have to build it yourself (use --enable-html during ./configure). If in doubt about the how and why of this, just use Zenity)
 
 
 Preview/Download has these dependencies:
@@ -437,16 +456,20 @@ Preview/Download has these dependencies:
 * curl | wget
 
 
-update_libgen has the following dependencies:
+`update_libgen` has the following dependencies:
 
 * jq (CLI json parser/mangler)
 * awk (tested with mawk, nawk and gawk)
 
 
-refresh_libgen has these dependencies:
+`refresh_libgen` has these dependencies:
 
 * w3m
 * wget
 * unrar
 * pv (only needed when using the verbose (-v) option
+
+`tm` has these dependencies:
+
+* transmission-remote
 
