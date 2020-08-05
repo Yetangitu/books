@@ -5,8 +5,8 @@ trap "trap_error" TERM
 trap "trap_clean" EXIT
 export TOP_PID=$$
 
-version="0.6"
-release="20200805"
+version="0.6.1"
+release="20200806"
 
 main () {
 	# PREFERENCES
@@ -1041,10 +1041,12 @@ list_dialog () {
 		dialog_exit=$?
 		exec 3>&-
 		clear
-		if [[ -n $dialog_result && $show_preview -gt 0 ]]; then
-			preview "$db" "$dialog_result"
-		else
-			download "$db" "$dialog_result"
+		if [[ -n $dialog_result ]]; then
+			if [[ $show_preview -gt 0 ]]; then
+				preview "$db" "$dialog_result"
+			else
+				download "$db" "$dialog_result"
+			fi
 		fi
 	fi
 }
@@ -1059,10 +1061,12 @@ list_whiptail () {
 		whiptail_exit=$?
 		exec 3>&-
 		clear
-		if [[ -n $whiptail_result && $show_preview -gt 0 ]]; then
-			preview "$db" "$whiptail_result"
-		else
-			download "$db" "$whiptail_result"
+		if [[ -n $whiptail_result ]]; then
+			if [[ $show_preview -gt 0 ]]; then
+				preview "$db" "$whiptail_result"
+			else
+				download "$db" "$whiptail_result"
+			fi
 		fi
 	fi
 }
@@ -1072,10 +1076,12 @@ list_yad () {
 	db="${programs[$program]}"
 	if [[ ${#query_result[@]} -gt 0 ]]; then
 		yad_result=$(yad --width $x_size --height $y_size --separator=" " --title "$program :: ${window_title}" --text "${list_heading}" --list --checklist --dclick-action='bash -c "libgen_preview '$db' %s" &' ${yad_columns[$db]} -- "${query_result[@]}" 2>/dev/null)
-		if [[ -n $yad_result && $show_preview -gt 0 ]];then
-			preview "$db" "$yad_result"
-		else
-			download "$db" "$yad_result"
+		if [[ -n $yad_result ]]; then
+			if [[ $show_preview -gt 0 ]]; then
+				preview "$db" "$yad_result"
+			else
+				download "$db" "$yad_result"
+			fi
 		fi
 	fi
 
@@ -1088,10 +1094,12 @@ list_zenity () {
 	db="${programs[$program]}"
 	if [[ ${#query_result[@]} -gt 0 ]]; then
 		zenity_result=$(zenity --width $x_size --height $y_size --separator=" " --title "$program :: ${window_title}" --text "${list_heading}" --list --checklist ${zenity_columns[$db]} "${query_result[@]}" 2>/dev/null)
-		if [[ -n $zenity_result && $show_preview -gt 0 ]];then
-			preview "$db" "$zenity_result"
-		else
-			download "$db" "$zenity_result"
+		if [[ -n $zenity_result ]];then
+			if [[ $show_preview -gt 0 ]]; then
+				preview "$db" "$zenity_result"
+			else
+				download "$db" "$zenity_result"
+			fi
 		fi
 	fi
 
