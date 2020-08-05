@@ -23,33 +23,33 @@ I'll let the programs themselves do the talking:
 
 ```txt
 $ books -h
-books version 0.5
+books version 0.6
 
 Use: books OPTIONS [like] [<PATTERN>]
 
-Perform a (case-insensitive) search for PATTERN (pattern match when preceded by 'like')
-
-There are two types of search: by field (default) and fulltext.
+(...)
 
 SEARCH BY FIELD:
 
-This is the default search mode. If no field options are given this searches the Title field
-for the PATTERN. Capital options (-A, -L, etc) for exact match, lower-case (-a, -l, etc) for pattern match.
+This is the default search mode. If no field options are given this searches
+the Title field for the PATTERN. Capital options (-A, -T, etc) for exact match,
+lower-case (-a, -t, etc) for pattern match.
 
 FULLTEXT SEARCH (-f):
 
-Performs a pattern match search over all fields indicated by the options. If no field options
-are given, perform a pattern match search over the Author and Title fields.
+Performs a pattern match search over all fields indicated by the options. If no
+field options are given, perform a pattern match search over the Author and
+Title fields.
 
 Depending on which name this program is executed under it behaves differently:
 
-    books: query database and show results
+    books: query database and show results, direct download with md5
     books-all: query database and show results (exhaustive search over all tables, slow)
 
     nbook: select publications for download from list (terminal-based)
     xbook: select publications for download from list (GUI)
 
-    fiction: query database and show results (using 'fiction' database)
+    fiction: query database and show results (using 'fiction' database), direct download with md5
 
     nfiction: select publications for download from list (terminal-based, use 'fiction' database)
     xfiction: select publications for download from list (GUI, use 'fiction' database)
@@ -87,11 +87,23 @@ OPTIONS
  		double-clicking a result row also shows a preview irrespective of this option,
  		but this only works when using the yad gui tool
 
-    -u		download torrent instead of actual publication
+    -= DIR	set download location to DIR
+
+    -$		use extended path when downloading:
+		    nonfiction/[topic/]author[/series]/title
+		    fiction/language/author[/series]/title
+
+    -u BOOL	use bittorrent (-u 1 or -u y) or direct download (-u 0 or -u n)
+ 		this parameter overrides the default download method
+ 		bittorrent download depends on an external helper script
+ 		to interface with a bittorrent client
 
     -U MD5	print torrent path (torrent#/md5) for given MD5
 
     -j MD5	print filename for given MD5
+
+    -J MD5	download file for given MD5
+                can be combined with -u to download with bittorrent
 
     -M MD5	fast path search on md5, only works in _books_ and _fiction_
     		can be combined with -F FIELDS to select fields to be shown
@@ -101,16 +113,16 @@ OPTIONS
 
     -# LIMIT	limit search to LIMIT hits (default: 1000)
 
-    -k		install symlinks for all program invocations
-
     -x		skip database update
- 		(currently only the 'main' libgen database can be updated)
+ 		(currently only the 'libgen' database can be updated)
 
     -@		use torsocks to connect to the libgen server(s). You'll need to install
     		torsocks before using this option; try this in case your ISP
     		(or a transit provider somewhere en-route) blocks access to libgen
 
-    -= DIR	set download location to DIR
+    -k		install symlinks for all program invocations
+
+    -h		show this help message
 
 EXAMPLES
 
@@ -132,9 +144,9 @@ one or more publications for download
 
   $ nbook -T 'The Odyssey' -A 'Homer'
 
-A case-insensitive pattern search using an X11-based interface
+A case-insensitive pattern search using an X11-based interface; use bittorrent (-u) when downloading files
 
-  $ xbook -t 'the odyssey' -a 'homer'
+  $ xbook -u y -t 'the odyssey' -a 'homer'
 
 Do a fulltext search over the Title, Author, Series, Periodical and Publisher fields, showing the
 results in a terminal-based checklist for download after preview (-w)
@@ -156,11 +168,16 @@ Find publications by author 'thucydides' and show their md5,title and year in th
 Get data on a single publication using fast path MD5 search, show author, title and extension
 
   $ books -M 51b4ee7bc7eeb6ed7f164830d5d904ae -F author,title,extension
+
+Download a publication using its MD5 (-J MD5), using bittorrent (-u) to download
+
+  $ books -u y -J 51b4ee7bc7eeb6ed7f164830d5d904ae
+
 ```
 
 ```txt
 $ update_libgen -h
-update_libgen version 0.5
+update_libgen version 0.6
 
 Usage: update_libgen OPTIONS
 
@@ -192,7 +209,7 @@ Usage: update_libgen OPTIONS
 
 ```txt
 $ refresh_libgen -h
-refresh_libgen version 0.5
+refresh_libgen version 0.6
 
 Usage: refresh_libgen OPTIONS
 
@@ -203,19 +220,99 @@ Performs a refresh from a database dump file for the chosen libgen databases.
     -f		force refresh, use this on first install
     -v		be verbose about what is being updated
     -d DAYS	only use database dump files no older than DAYS days (default: 5)
-    -u DBS	refresh DBS databases (default: compact fiction main)
+    -u DBS	refresh DBS databases (default: compact fiction libgen)
 
-    -H DBHOST	database host (default: base.unternet.org)
-    -P DBPORT	database port (default: 3306)
-    -U DBUSER	database user (default: libgen)
+    -H DBHOST	database host (localhost)
+    -P DBPORT	database port (3306)
+    -U DBUSER	database user (libgen)
+    -R REPO	dump repository (http://gen.lib.rus.ec/dbdumps/)
+    -c 		create a config file using current settings (see -H, -P, -U, -R)
+
     -p DBPASS	database password (cache password for this session)
  		use empty string ("") to get password prompt
-    -q		prompt for password on each database invocation
- 		safer (password not visible in ps) but less convenient
-    -a REPO	set dump repository to REPO
+
     -@		use tor (through torsocks) to connect to libgen server
     -k		keep downloaded files after exit
     -h		this help message
+```
+
+##Torrents, direct download...
+
+*Books* (et al) can download files either from torrents or from one of the libgen download mirrors. To limit the load on the download servers it is best to use torrents whenever possible. The latest publications are not yet available through torrents since those are only created for batches of 1000 publications. The feasibility of torrent download also depends on whether the needed torrents are seeded. Publications which can not be downloaded through torrents can be downloaded directly.
+
+###Torrent download process
+Torrent download works by selecting individual files for download from the 'official' torrents, i.e. it is *not* necessary to download the whole torrent for a single publication. This process is automated by means of a helper script which is used to interface *books* with a torrent client. Currently the only torrent client for which a helper script is available is *transmission-daemon*, the script uses the related *transmission-remote* program to interface with the daemon. Writing a helper script should not be that hard for other torrent clients as long as these can be controlled through the command line or via an API.
+
+When downloading through torrents *books* first tries to download the related torrent file from the 'official' repository, if this fails it gives up and suggests using direct download instead. Once the torrent file has been downloaded it is checked to see whether it contains the required file. If this check passes the torrent is submitted to the torrent client with only the required file selected for download. A job script is created which can be used to control the torrent job. This script is optionally (depending on the torrent_cron_job parameter in the PREFERENCES section or the config file) submitted as a cron job. The task of this script is to copy the downloaded file from the torrent client download directory (preference: torrent_download_directory) to the target directory (preference: target_directory) under the correct name. Once the torrent has finished downloading the job script will copy the file to that location and remove the cron job. If torrent_cron_job is not set (or is set to 0) the job script can be called 'by hand' to copy the file, it can also be called to perform other tasks like retrying the download from a libgen download mirror server (use -D, this will cancel the torrent and cron job for this file). Here is its help message:
+
+```txt
+Use: bash jobid.job [-s] -[i] [-r] [-R] [-D] [-h] [torrent_download_directory]
+
+Copies file from libgen/libgen_fiction torrent to correct location and name
+
+    -S	show job status
+    -s	show torrent status (short)
+    -i	show torrent info (long)
+    -I	show target file name
+    -r	remove torrent and cron jobs
+    -R	restart torrent download (does not restart cron job)
+    -D	direct download (removes torrent and cron jobs)
+    -h	show this help message
+```
+
+###The torrent helper script interface
+The torrent helper script (here named `ttool`) needs to support the following commands:
+
+* ttool add-selective <torrent_file> <md5>
+  download file <md5> from torrent <torrent_file>
+* ttool torrent-hash <torrent_file>
+  get btih (info-hash) for <torrent_file>
+* ttool torrent-files <torrent_file>
+  list files in <torrent_file>
+* ttool remove <btih>
+  remove active torrent with info-hash <btih>
+* ttool ls <btih>
+  show download status for active torrent with info-hash <btih>
+* ttool info <btih>
+  show extensive info (files, peers, etc) for torrent with info-hash <btih>
+* ttool active <btih>
+  return `true` if the torrent is active, `false` otherwise
+
+Output should be the requested data without any headers or explanation. Here is an example using the (included) `tm` helper script for the *transmission-daemon* torrent client, showing all required commands:
+
+```txt
+$ tm torrent-files r_2412000.torrent 
+2412000/00b3c21460499dbd80bb3a118974c879
+2412000/00b64be1207c374e8719ee1186a33c4d
+2412000/00c4f3a075d3af0813479754f010c491
+...
+... (994 files omitted for brevity)
+...
+2412000/ff2473a3b8ec1439cc459711fb2a4b97
+2412000/ff913204c002f19ed2ee1e2bdfd236d4
+2412000/ffb249ae5d148639d38f2af2dba6c681
+
+$ tm torrent-hash r_2412000.torrent 
+e73d4bc21d0f91088c174834840f7da232330b4d
+
+$ tm add-selective r_2412000.torrent 00c4f3a075d3af0813479754f010c491
+... (torrent client output omitted)
+
+$ tm ls 6934f632c06a91572b4401e5b4c96eec89d311d7
+    ID   Done       Have  ETA           Up    Down  Ratio  Status       Name
+    25     0%       None  Unknown      0.0     0.0   None  Idle         762000
+Sum:                None               0.0     0.0
+
+(output from transmission-daemon, format is client-dependent)
+
+$ tm info 6934f632c06a91572b4401e5b4c96eec89d311d7
+... (torrent client output omitted)
+
+$ tm active 6934f632c06a91572b4401e5b4c96eec89d311d7; echo "torrent is $([[ $? -gt 0 ]] && echo "not ")active"
+torrent is active
+
+$ tm active d34db33f; echo "torrent is $([[ $? -gt 0 ]] && echo "not ")active"
+torrent is not active
 ```
 
 ##Installation
@@ -227,9 +324,17 @@ Download this repository and copy the three scripts - books, update_libgen and r
 ```
 main () {
         # PREFERENCES
+        config=${XDG_CONFIG_HOME:-$HOME/.config}/books.conf
 
         # target directory for downloaded publications
         target_directory="${HOME}/Books"
+        # when defined, subdirectory of $target_directory) for torrents
+        torrent_directory="torrents"
+        # when defined, location where files downloaded with torrent client end up
+        # torrent_download_directory="/net/p2p/incoming" <<<<<< ... ENABLE/CONFIGURE ME ... >>>>>>
+        # when true, launch cron jobs to copy files from torrent download directory
+        # to target directory using the correct name
+        torrent_cron_job=1
         # default limit on queries
         limit=1000
         # maximum database age (in minutes) before attempting update
@@ -248,7 +353,7 @@ main () {
         list_heading="Select publication(s) for download:"
 
         # add md5 to filename? Possibly superfluous as it can be derived from the file contents but a good guard against file corruption
-        filename_add_md5=1
+        filename_add_md5=0
 
         # tool preferences, list preferred tool first
         gui_tools="yad|zenity"
@@ -256,7 +361,12 @@ main () {
         dl_tools="curl|wget"
         parser_tools="xidel|hxwls"
         pager_tools="less|more"
-       
+
+        # torrent helper tools need to support the following commands:
+        # ttool add-selective <torrent_file> <md5>  # downloads file <md5> from torrent <torrent_file>
+        # ttool torrent-hash <torrent_file>         # gets btih for <torrent_file>
+        # ttool torrent-files <torrent_file>        # lists files in <torrent_file>
+        torrent_tools="tm"   <<<<<<<<<<<< ... CONFIGURE ME ..... >>>>>>>>>>>>>>>>
 
         # database names to use:
         #   books, books-all, nbook, xbook and xbook-all use the main libgen database
@@ -273,12 +383,14 @@ main () {
         )
 ```
 
-The same goes for the 'PREFERENCES' sections in update_libgen and refresh_libgen. In most cases the only parameter which might need change is `dbhost` and possibly `dbuser`. Since all programs use a common `books.conf` config file it is usually sufficient to add there parameters there:
+The same goes for the 'PREFERENCES' sections in update_libgen and refresh_libgen. In most cases the only parameters which might need change are `dbhost`, `dbuser`, `torrent_download_directory` and possibly `torrent_tools`. Since all programs use a common `books.conf` config file it is usually sufficient to add these parameters there:
 
 ```
 $ cat $HOME/.config/books.conf
 dbhost="base.example.org
 dbuser="exampleuser"
+torrent_download_directory="/net/p2p/incoming"
+torrent_tools="tm"
 ```
 
 Please note that there is no option to enter a database password as that would be rather insecure. Either use a read-only, password-free mysql user to access the database or enter your database details in $HOME/.my.cnf, like so:
