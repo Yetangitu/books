@@ -473,7 +473,7 @@ download () {
 	shift
 	for md5 in "$@"; do
 
-		if [[ -n "$use_torrent" ]]; then
+		if is_true "$use_torrent"; then
 			dl_src_torrent "${db}" "${md5}"
 		else
 			filename=$(get_attr 'filename' "$db" "$md5")
