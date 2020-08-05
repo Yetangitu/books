@@ -321,7 +321,7 @@ Create a database on a mysql server somewhere within reach of the intended host.
 
 Download this repository and copy the three scripts - books, update_libgen and refresh_libgen - into a directory which is somewhere on your $PATH ($HOME/bin would be a good spot).
 
-```
+```bash
 main () {
         # PREFERENCES
         config=${XDG_CONFIG_HOME:-$HOME/.config}/books.conf
@@ -385,9 +385,9 @@ main () {
 
 The same goes for the 'PREFERENCES' sections in update_libgen and refresh_libgen. In most cases the only parameters which might need change are `dbhost`, `dbuser`, `torrent_download_directory` and possibly `torrent_tools`. Since all programs use a common `books.conf` config file it is usually sufficient to add these parameters there:
 
-```
+```bash
 $ cat $HOME/.config/books.conf
-dbhost="base.example.org
+dbhost="base.example.org"
 dbuser="exampleuser"
 torrent_download_directory="/net/p2p/incoming"
 torrent_tools="tm"
@@ -395,7 +395,7 @@ torrent_tools="tm"
 
 Please note that there is no option to enter a database password as that would be rather insecure. Either use a read-only, password-free mysql user to access the database or enter your database details in $HOME/.my.cnf, like so:
 
-```
+```ini
 [mysql]
 user=exampleuser
 password=zooperzeekret
