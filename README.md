@@ -1,12 +1,12 @@
 # books
 
-[B]ooks - which is only one of the names this program goes by - is a front-end for accessing a locally accessible libgen / libgen_fiction database instance, offering versatile search and download directly from the command line. The included update_libgen tool is used to keep the database up to date - if the database is older than a user-defined value it is updated before the query is executed. This generally only takes a few seconds, but it might take longer on a slow connection or after a long update interval. Updating can be temporarily disabled by using the '-x' command line option. To refresh the database(s) from a dump file use the included refresh_libgen program, see 'update_libgen vs refresh_libgen' below for more information on which tool to use.
+[B]ooks - which is only one of the names this program goes by - is a front-end for accessing a locally accessible libgen / libgen_fiction database instance, offering versatile search and download directly from the command line. The included `update_libgen` tool is used to keep the database up to date - if the database is older than a user-defined value it is updated before the query is executed. This generally only takes a few seconds, but it might take longer on a slow connection or after a long update interval. Updating can be temporarily disabled by using the '-x' command line option. To refresh the database(s) from a dump file use the included `refresh_libgen program`, see 'update_libgen vs refresh_libgen' below for more information on which tool to use.
 
 Books comes in three main flavours:
 
-* *books / books-all / fiction*: CLI search interface which dumps results to the terminal, download through MD5
-* *nbook / nfiction*: text-based browser offering limited preview and download
-* *xbook / xfiction*: gui-based browser offering preview and download
+* `books` / `books-all` / `fiction`: CLI search interface which dumps results to the terminal, download through MD5
+* `nbook` / `nfiction`: text-based browser offering limited preview and download
+* `xbook` / `xfiction`: gui-based browser offering preview and download
 
 
 The *book* tools are based on the *libgen* database, the *fiction* tools use the *libgen_fiction* database. Apart from the fact that the *fiction* tools do not support all the search criteria offered by the 'book' tools due to differences in the database layout, all programs share the same interface.
@@ -15,7 +15,7 @@ The database can be searched in two modes, per-field (the default) and fulltext 
 
 In the (default) per-field search mode the database can be searched for patterns (SQL 'like' operator with leading and trailing wildcards) using lower-case options and/or exact matches using upper-case options. The fulltext search by necessity always uses pattern matching over the indicated fields ('title' and 'author' if no other fields are specified).
 
-Publications can be downloaded using torrents or from libgen download mirror servers by selecting them in the result list or by using the 'Download' button in the preview window, the *books* and *fiction* tools can be used to download publications based on their MD5 hash (use `-J ...`). When using the gui-based tools in combination with the 'yad' tool, double-clicking a row in the result list shows a preview, the other tools generate previews for selected publications using the '-w' command line option.
+Publications can be downloaded using torrents or from libgen download mirror servers by selecting them in the result list or by using the 'Download' button in the preview window, the `books` and `fiction` tools can be used to download publications based on their MD5 hash (use `-J ...`). When using the gui-based tools in combination with the 'yad' tool, double-clicking a row in the result list shows a preview, the other tools generate previews for selected publications using the '-w' command line option.
 
 ##How to use *books* et al.
 
@@ -330,6 +330,114 @@ $ tm active d34db33f; echo "torrent is $([[ $? -gt 0 ]] && echo "not ")active"
 torrent is not active
 ```
 
+####The `tm` torrent helper script
+The `tm` torrent helper script supports the following options:
+```txt
+$ tm -h
+tm version 0.1
+
+Use: tm COMMAND OPTIONS [parameters]
+     tm-COMMAND OPTIONS [parameters]
+
+A helper script for transmission-remote and related tools, adding some
+functionality like selective download etc.
+
+PROGRAMS/COMMANDS
+
+    tm-active   	active
+    tm-add      	add
+    tm-add-selective    add-selective
+    tm-cmd      	cmd
+    tm-file-count       file-count
+    tm-files    	files
+    tm-help     	help
+    tm-info     	info
+    tm-ls       	ls
+    tm-remove   	remove
+    tm-start    	start
+    tm-stop     	stop
+    tm-torrent-files    torrent-files
+    tm-torrent-hash     torrent-hash
+    tm-torrent-show     torrent-show
+
+OPTIONS
+
+    -k		create symbolic links
+                creates links to all supported commands
+                e.g. tm-cmd, tm-ls, tm-add, ...
+                links are created in the directory where tm resides
+
+    -n NETRC	set netrc (/home/frank/.tm-netrc)
+
+    -H HOST	set host (p2p:4081)
+
+    -c		create a config file using current settings (see -n, -H)
+
+    -l		execute command 'ls'
+
+    -a TORR	execute command 'add'
+
+    -h		this help message
+
+EXAMPLES
+
+In all cases it is possible to replace tm-COMMAND with tm COMMAND
+
+show info about running torrents:
+
+    $ tm-ls
+
+add a torrent or a magnet link:
+
+    tm-add /path/to/torrent/file.torrent
+    tm-add 'magnet:?xt=urn:btih:123...'
+
+add a torrent and selectivly download two files
+this only works with torrent files (i.e. not magnet links) for now
+
+    tm-add-selective /path/to/torrent/file.torrent filename1,filename2
+
+show information about a running torrent, using its btih or ID:
+
+    tm-show f0a7524fe95910da462a0d1b11919ffb7e57d34a
+    tm-show 21
+
+show files for a running torrent identified by btih (can also use ID)
+
+    tm-files f0a7524fe95910da462a0d1b11919ffb7e57d34a
+
+stop a running torrent, using its ID (can also use btih)
+
+    tm-stop 21
+
+get btih for a torrent file
+
+    tm-torrent-hash /path/to/torrent/file.torrent
+
+remove a torrent from transmission
+
+    tm-remove 21
+
+execute any transmission-remote command - notice the double dash
+see man transmission-remote for more info on supported commands
+
+
+    tm-cmd -- -h
+    tm cmd -h
+
+
+CONFIGURATION FILES
+
+    /home/frank/.config/tm.conf
+
+tm can be configured by editing the script itself or the configuration file:
+
+        netrc=~/.tm-netrc
+        tm_host="transmission-host.example.org:4081"
+
+values set in the configuration file override those in the script
+```
+
 ##Installation
 Download this repository (or a tarball) and copy the four scripts - `books`, `update_libgen`, `refresh_libgen` and `tm` (only needed when using the transmission-daemon torrent client) - into a directory which is somewhere on your $PATH ($HOME/bin would be a good spot). Run `books -k`to create symlinks to the various names under which the program can be run:
 
@@ -344,7 +452,7 @@ Download this repository (or a tarball) and copy the four scripts - `books`, `up
 Create a database on a mysql server somewhere within reach of the intended host. Either open *books* in an editor to configure the database details (look for `CONFIGURE ME` below) and anything else (eg. `target_directory` for downloaded books, `max_age` before update, `language` for topics, MD5 in filenames, tools, etc) or add these settings to the (optional) config file `books.conf` in $XDG_CONFIG_HOME (usually $HOME/.config). The easiest way to create the config file is to run `refresh_libgen` with the required options. As an example, the following command sets the database server to `base.example.org`, the database port to `3306` and the database username to `genesis`:
 
 ```bash
-$ refresh_libgen -H base.example.org -P 3306 -U genesis -c`
+$ refresh_libgen -H base.example.org -P 3306 -U genesis -c
 ```
 
 Make sure to add the `-c` option *at the end* of the command or it won't work. Once the config file has been created it can be edited 
