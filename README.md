@@ -19,7 +19,7 @@ Publications can be downloaded using torrents or from libgen download mirror ser
 
 See [Installation](#installation) for information on how to install *books*.
 
-##How to use *books* et al.
+## How to use *books* et al.
 
 I'll let the programs themselves do the talking:
 
@@ -249,11 +249,11 @@ Performs a refresh from a database dump file for the chosen libgen databases.
     -h		this help message
 ```
 
-##Torrents, direct download...
+## Torrents, direct download...
 
 *Books* (et al) can download files either from torrents (using `-u y` or `-u 1`) or from one of the libgen download mirrors (default, use`-u n` or `-u 0` in case torrent download is set as default). To limit the load on the download servers it is best to use torrents whenever possible. The latest publications are not yet available through torrents since those are only created for batches of 1000 publications. The feasibility of torrent download also depends on whether the needed torrents are seeded. Publications which can not be downloaded through torrents can be downloaded directly.
 
-###Torrent download process
+### Torrent download process
 Torrent download works by selecting individual files for download from the 'official' torrents, i.e. it is *not* necessary to download the whole torrent for a single publication. This process is automated by means of a helper script which is used to interface *books* with a torrent client. Currently the only torrent client for which a helper script is available is *transmission-daemon*, the script uses the related *transmission-remote* program to interface with the daemon. Writing a helper script should not be that hard for other torrent clients as long as these can be controlled through the command line or via an API.
 
 When downloading through torrents *books* first tries to download the related torrent file from the 'official' repository, if this fails it gives up and suggests using direct download instead. Once the torrent file has been downloaded it is checked to see whether it contains the required file. If this check passes the torrent is submitted to the torrent client with only the required file selected for download. A job script is created which can be used to control the torrent job, if the `torrent_cron_job` parameter in the PREFERENCES section or the config file is set to `1` it is submitted as a cron job. The task of this script is to copy the downloaded file from the torrent client download directory (`torrent_download_directory` in books.conf or the PREFERENCES section) to the target directory (preference `target_directory`) under the correct name. Once the torrent has finished downloading the job script will copy the file to that location and remove the cron job. If `torrent_cron_job` is not set (or is set to `0`) the job script can be called 'by hand' to copy the file, it can also be used to perform other tasks like retrying the download from a libgen download mirror server (use `-D`, this will cancel the torrent and cron job for this file) or to retry the torrent download (use `-R`). The script has the following options:
@@ -274,7 +274,7 @@ Copies file from libgen/libgen_fiction torrent to correct location and name
     -h	show this help message
 ```
 
-###The torrent helper script interface
+### The torrent helper script interface
 The torrent helper script (here named `ttool`) needs to support the following commands:
 
 * `ttool add-selective <torrent_file> <md5>`
@@ -332,7 +332,7 @@ $ tm active d34db33f; echo "torrent is $([[ $? -gt 0 ]] && echo "not ")active"
 torrent is not active
 ```
 
-####The `tm` torrent helper script
+#### The `tm` torrent helper script
 The `tm` torrent helper script supports the following options:
 ```txt
 $ tm -h
@@ -440,7 +440,7 @@ tm can be configured by editing the script itself or the configuration file:
 values set in the configuration file override those in the script
 ```
 
-##Installation
+## Installation
 Download this repository (or a tarball) and copy the four scripts - `books`, `update_libgen`, `refresh_libgen` and `tm` (only needed when using the transmission-daemon torrent client) - into a directory which is somewhere on your $PATH ($HOME/bin would be a good spot). Run `books -k`to create symlinks to the various names under which the program can be run:
 
 * `books`
@@ -548,7 +548,7 @@ Install symlinks to all tools by calling books with the -k option:
  $ books -k
 ```
 
-##*update_libgen* vs. *refresh_libgen*
+## *update_libgen* vs. *refresh_libgen*
 
 If you regularly use books, nbook and/or xbook, the main (or compact) database should be kept up to date automatically. In that case it is only necessary to use *refresh_libgen* to refresh the database when you get a warning from *update_libgen* about unknown columns in the API response.
 
@@ -556,7 +556,7 @@ If you have not used any of these tools for a while it can take a long time - an
 
 The *fiction* database can not be updated through the API (yet), so for that databases *refresh_libgen* is currently the canonical way to get the latest version.
 
-##Dependencies
+## Dependencies
 
 These tools have the following dependencies (apart from a locally available libgen/libgen_fiction instance on MySQL/MariaDB), sorted in order of preference:
 
@@ -592,4 +592,5 @@ Preview/Download has these dependencies:
 `tm` has these dependencies:
 
 * transmission-remote
+
 
