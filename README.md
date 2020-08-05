@@ -17,6 +17,8 @@ In the (default) per-field search mode the database can be searched for patterns
 
 Publications can be downloaded using torrents or from libgen download mirror servers by selecting them in the result list or by using the 'Download' button in the preview window, the `books` and `fiction` tools can be used to download publications based on their MD5 hash (use `-J ...`). When using the gui-based tools in combination with the 'yad' tool, double-clicking a row in the result list shows a preview, the other tools generate previews for selected publications using the '-w' command line option.
 
+See [Installation](#installation) for information on how to install *books*.
+
 ##How to use *books* et al.
 
 I'll let the programs themselves do the talking:
