@@ -4,18 +4,18 @@
 
 Books comes in three main flavours:
 
-* *books / books-all / fiction*: plain search interface which dumps results to the terminal
-* *nbook / nfiction*: text-based browser offering limited preview and direct download
-* *xbook / xfiction*: gui-based browser offering preview and direct download
+* *books / books-all / fiction*: CLI search interface which dumps results to the terminal, download through MD5
+* *nbook / nfiction*: text-based browser offering limited preview and download
+* *xbook / xfiction*: gui-based browser offering preview and download
 
 
-The *book* tools are based on the *main* libgen database, the *fiction* tools use the *libgen_fiction* database. Apart from the fact that the *fiction* tools do not support all the search criteria offered by the 'book' tools due to differences in the database layout, all programs share the same interface.
+The *book* tools are based on the *libgen* database, the *fiction* tools use the *libgen_fiction* database. Apart from the fact that the *fiction* tools do not support all the search criteria offered by the 'book' tools due to differences in the database layout, all programs share the same interface.
 
 The database can be searched in two modes, per-field (the default) and fulltext (which, of course, only searches book metadata, not the actual book contents). The current implementation for fulltext search is actually a pattern match search on a number of concatenated database columns, it does not use MySQL's native fulltext search. The advantage of this implementation is that it does not need a full-text index (which is not part of the libgen dump and would need to be generated locally), the disadvantage is that it does not offer more advanced natural language search options. Given the limited amount of 'natural language' available in the database the latter does not seem to be much of a disadvantage and the implementation performs well.
 
 In the (default) per-field search mode the database can be searched for patterns (SQL 'like' operator with leading and trailing wildcards) using lower-case options and/or exact matches using upper-case options. The fulltext search by necessity always uses pattern matching over the indicated fields ('title' and 'author' if no other fields are specified).
 
-Publications can be downloaded by selecting them in the result list or by using the 'Download' button in the preview window. When using the gui-based tools in combination with the 'yad' tool, double-clicking a row in the result list shows a preview, the other tools generate previews for selected publications using the '-w' command line option.
+Publications can be downloaded using torrents or from libgen download mirror servers by selecting them in the result list or by using the 'Download' button in the preview window, the *books* and *fiction* tools can be used to download publications based on their MD5 hash (use `-J ...`). When using the gui-based tools in combination with the 'yad' tool, double-clicking a row in the result list shows a preview, the other tools generate previews for selected publications using the '-w' command line option.
 
 ##How to use *books* et al.
 
@@ -90,8 +90,8 @@ OPTIONS
     -= DIR	set download location to DIR
 
     -$		use extended path when downloading:
-		    nonfiction/[topic/]author[/series]/title
-		    fiction/language/author[/series]/title
+    		    nonfiction/[topic/]author[/series]/title
+    		    fiction/language/author[/series]/title
 
     -u BOOL	use bittorrent (-u 1 or -u y) or direct download (-u 0 or -u n)
  		this parameter overrides the default download method
@@ -130,46 +130,56 @@ Do a pattern match search on the Title field for 'ilias' and show the results in
 
   $ books like ilias
 
+
 Do an exact search on the Title field for 'The Odyssey' and show the results in the terminal
 
   $ books 'the odyssey'
+
 
 Do an exact search on the Title field for 'The Odyssey' and the Author field for 'Homer', showing
 the result in the terminal
 
   $ books -T 'The Odyssey' -A 'Homer'
 
+
 Do the same search as above, showing the results in a list on the terminal with checkboxes to select
 one or more publications for download
 
   $ nbook -T 'The Odyssey' -A 'Homer'
 
-A case-insensitive pattern search using an X11-based interface; use bittorrent (-u) when downloading files
+
+A case-insensitive pattern search using an X11-based interface; use bittorrent (-u y or -u 1) when downloading files
 
   $ xbook -u y -t 'the odyssey' -a 'homer'
+
 
 Do a fulltext search over the Title, Author, Series, Periodical and Publisher fields, showing the
 results in a terminal-based checklist for download after preview (-w)
 
   $ nbook -w -f -t -a -s -r -p 'odyssey'
 
+
 Walk over a directory of publications, compute md5 and use this to generate file names:
 
   $ find /path/to/publications -type f|while read f; do books -j $(md5sum "$f"|awk '{print $1}');done
+
 
 As above, but print torrent number and path in torrent file
 
   $ find /path/to/publications -type f|while read f; do books -U $(md5sum "$f"|awk '{print $1}');done
 
+
 Find publications by author 'thucydides' and show their md5,title and year in the terminal
 
   $ books -a thucydides -F md5,title,year
+
 
 Get data on a single publication using fast path MD5 search, show author, title and extension
 
   $ books -M 51b4ee7bc7eeb6ed7f164830d5d904ae -F author,title,extension
 
-Download a publication using its MD5 (-J MD5), using bittorrent (-u) to download
+
+Download a publication using its MD5 (-J MD5), using bittorrent (-u y or -u 1) to download
 
   $ books -u y -J 51b4ee7bc7eeb6ed7f164830d5d904ae
 
@@ -346,7 +356,7 @@ main () {
         config=${XDG_CONFIG_HOME:-$HOME/.config}/books.conf
 
         # target directory for downloaded publications
-        target_directory="${HOME}/Books"
+        target_directory="${HOME}/Books"      <<<<<< ... CONFIGURE ME ... >>>>>>
         # when defined, subdirectory of $target_directory) for torrents
         torrent_directory="torrents"
         # when defined, location where files downloaded with torrent client end up
@@ -359,7 +369,7 @@ main () {
         # maximum database age (in minutes) before attempting update
         max_age=120
         # topics are searched/displayed in this language ("en" or "ru")
-        language="en"
+        language="en"       <<<<<<<<<<<< ... CONFIGURE ME ..... >>>>>>>>>>>>>>>>
         # database host
         dbhost="localhost"  <<<<<<<<<<<< ... CONFIGURE ME ..... >>>>>>>>>>>>>>>>
         # database port

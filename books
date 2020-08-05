@@ -1465,44 +1465,54 @@ help () {
 
 	  $ books like ilias
 
+
 	Do an exact search on the Title field for 'The Odyssey' and show the results in the terminal
 
 	  $ books 'the odyssey'
+
 
 	Do an exact search on the Title field for 'The Odyssey' and the Author field for 'Homer', showing
 	the result in the terminal
 
 	  $ books -T 'The Odyssey' -A 'Homer'
 
+
 	Do the same search as above, showing the results in a list on the terminal with checkboxes to select
 	one or more publications for download
 
 	  $ nbook -T 'The Odyssey' -A 'Homer'
 
+
 	A case-insensitive pattern search using an X11-based interface; use bittorrent (-u) when downloading files
 
 	  $ xbook -u y -t 'the odyssey' -a 'homer'
+
 
 	Do a fulltext search over the Title, Author, Series, Periodical and Publisher fields, showing the
 	results in a terminal-based checklist for download after preview (-w)
 
 	  $ nbook -w -f -t -a -s -r -p 'odyssey'
 
+
 	Walk over a directory of publications, compute md5 and use this to generate file names:
 
 	  $ find /path/to/publications -type f|while read f; do books -j $(md5sum "$f"|awk '{print $1}');done
+
 
 	As above, but print torrent number and path in torrent file
 
 	  $ find /path/to/publications -type f|while read f; do books -U $(md5sum "$f"|awk '{print $1}');done
 
+
 	Find publications by author 'thucydides' and show their md5,title and year in the terminal
 
 	  $ books -a thucydides -F md5,title,year
 
+
 	Get data on a single publication using fast path MD5 search, show author, title and extension
 
 	  $ books -M 51b4ee7bc7eeb6ed7f164830d5d904ae -F author,title,extension
+
 
 	Download a publication using its MD5 (-J MD5), using bittorrent (-u) to download
 	
