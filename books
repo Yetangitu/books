@@ -5,8 +5,8 @@ trap "trap_error" TERM
 trap "trap_clean" EXIT
 export TOP_PID=$$
 
-version="0.6.1"
-release="20200806"
+version="0.6.2"
+release="20200813"
 
 main () {
 	# PREFERENCES
@@ -393,7 +393,6 @@ main () {
 		# set no_update to 1 in case that script is not available, or when this script is run on a
 		# system without internet access
 		if [[ -z $no_update ]]; then
-			update_libgen=$(find_tool "update_libgen")
 			update_database
 		fi
 		;;
@@ -471,7 +470,7 @@ find_tool () {
 download () {
 	db="$1"
 	shift
-	for md5 in "$@"; do
+	for md5 in $@; do
 
 		if is_true "$use_torrent"; then
 			dl_src_torrent "${db}" "${md5}"
@@ -764,6 +763,7 @@ update_database () {
         last_update=$(($(date +%s)-$(date -d "$(get_time_last_modified $db)" +%s)))
 	if [[ $last_update -gt $((max_age*60)) ]]; then
 		if [[ $no_update -eq 0 ]]; then
+			update_libgen=$(find_tool "update_libgen")
 			"$update_libgen"
 		else
 			echo "The database was last updated $((last_update/60)) minutes ago, consider updating"
@@ -987,7 +987,6 @@ preview_zenity () {
 		if [[ ${#query_result[@]} -gt 0 ]]; then
 			filename=$(get_attr 'filename' "$db" "$md5")
 			info="<table><tr><td><b>Author</b>:</td><td colspan='5'>${query_result[0]}</td></tr><tr><td><b>Title</b>:</td><td colspan='5'>${query_result[1]}</td></tr><tr><td><b>Volume</b>:</td><td>${query_result[2]}</td><td><b>Series</b>:</td><td>${query_result[3]}</td><td><b>Edition</b>:</td><td>${query_result[4]}</td></tr><tr><td><b>Year</b>:</td><td>${query_result[5]}</td><td><b>Publisher</b>:</td><td>${query_result[6]}</td></tr><tr><td><b>Language</b>:</td><td>${query_result[7]}</td><td><b>Size</b>:</td><td>${query_result[8]}</td><td><b>Type</b>:</td><td>${query_result[9]}</td></tr><tr><td><b>OLID</b>:</td><td>${query_reslt[10]}</td><td><b>ISBN</b>:</td><td>${query_result[11]}</td><td><b>MD5</b>:</td><td>${md5^^}</td></tr></table><span style='font-size:x-small;'><pre>${filename}</pre></span><hr><table><tr><td style='width:25%;'><img style='width:95%;' src='${coverurl[$db]}/${query_result[13]}'></td><td style='vertical-align:top;'>$(strip_html ${query_result[12]})</td></tr></table>"
-			echo "$info" > /tmp/info
 			zenity_result=$(echo "$info"|zenity --width $x_size --height $y_size --text-info --html --ok-label "Download" --cancel-label "Skip" --filename=/dev/stdin 2>/dev/null)
 			if [[ $? -eq 0 ]]; then
 				dl_src_${db} "$md5" "$filename"
@@ -1006,7 +1005,6 @@ preview_yad () {
                 if [[ ${#query_result[@]} -gt 0 ]]; then
                         filename=$(get_attr 'filename' "$db" "$md5")
                         info="<table><tr><td><b>Author</b>:</td><td colspan='5'>${query_result[0]}</td></tr><tr><td><b>Title</b>:</td><td colspan='5'>${query_result[1]}</td></tr><tr><td><b>Volume</b>:</td><td>${query_result[2]}</td><td><b>Series</b>:</td><td>${query_result[3]}</td><td><b>Edition</b>:</td><td>${query_result[4]}</td></tr><tr><td><b>Year</b>:</td><td>${query_result[5]}</td><td><b>Publisher</b>:</td><td>${query_result[6]}</td></tr><tr><td><b>Language</b>:</td><td>${query_result[7]}</td><td><b>Size</b>:</td><td>${query_result[8]}</td><td><b>Type</b>:</td><td>${query_result[9]}</td></tr><tr><td><b>OLID</b>:</td><td>${query_reslt[10]}</td><td><b>ISBN</b>:</td><td>${query_result[11]}</td><td><b>MD5</b>:</td><td>${md5^^}</td></tr></table><span style='font-size:x-small;'><pre>${filename}</pre></span><hr><table><tr><td style='width:25%;'><img style='width:95%;' src='${coverurl[$db]}/${query_result[13]}'></td><td style='vertical-align:top;'>$(strip_html ${query_result[12]})</td></tr></table>"
-			echo "$info" > /tmp/info
                         yad_result=$(echo "$info"|yad --width $x_size --height $y_size --html --button='gtk-cancel:1' --button='Download!filesave!Download this publication:0' --filename=/dev/stdin 2>/dev/null)
 			yad_return=$?
                         if [[ $yad_return -eq 0 ]]; then
