@@ -5,8 +5,8 @@ trap "trap_error" TERM
 trap "trap_clean" EXIT
 export TOP_PID=$$
 
-version="0.6.2"
-release="20200813"
+version="0.6.3"
+release="20200814"
 
 main () {
 	# PREFERENCES
@@ -886,6 +886,9 @@ get_filename () {
 	db="${programs[$program]}"
 
 	filename=$(get_attr "filename" "$db" "$md5")
+
+	# trim overly long filenames to 255 characters
+	[[ ${#filename} > 255 ]] && filename="${filename:0:126}...${filename: -126}"
 
 	[[ -n "$filename" ]] && echo "$filename"
 }
