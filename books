@@ -5,8 +5,8 @@ trap "trap_error" TERM
 trap "trap_clean" EXIT
 export TOP_PID=$$
 
-version="0.6.4"
-release="20200815"
+version="0.6.5"
+release="20200816"
 
 main () {
 	# PREFERENCES
@@ -446,7 +446,7 @@ find_tool () {
 
 	found=0
 
-	for tool in "${tools[@]}"; do
+	for tool in ${tools[@]}; do
 		if [[ -n $(which "$tool") ]]; then
 			found=1
 			break
@@ -472,20 +472,14 @@ download () {
 	shift
 	for md5 in $@; do
 
-		if is_true "$use_torrent"; then
-			dl_src_torrent "${db}" "${md5}"
-		else
-			filename=$(get_attr 'filename' "$db" "$md5")
-			if [[ -n $filename ]]; then
-				if [[ -n $use_deep_path ]]; then
-					dirname="${dirprefix[$db]}/$(get_attr 'dirname' "$db" "$md5")"
-					if [[ -n $dirname ]]; then
-						mkdir -p "${target_directory}/${dirname}"
-						filename="${dirname}/${filename}"
-					fi
-				fi
+		filename=$(get_filename "$md5")
 
-				"dl_src_${db}" "${md5}" "${filename}"
+		if [[ -n "$filename" ]]; then
+
+			if is_true "$use_torrent"; then
+				dl_src_torrent "$db" "$md5" "$filename"
+			else
+				dl_src_${db} "$md5" "$filename"
 			fi
 		fi
 	done
@@ -612,7 +606,10 @@ dl_src_libgen_fiction () {
 
 dl_src_torrent () {
 	db="$1"
-	md5="$2"
+	shift
+	md5="$1"
+	shift
+	dest_filename="$*"
 
 	torrent_abspath=$(get_torrent_filename "${db}" "${md5}" 1)
 	ttool=$(find_tool "$torrent_tools")
@@ -625,14 +622,13 @@ dl_src_torrent () {
 			torrent_job=$(date +%Y%m%d-%H%M%S)-$(get_torrent "$db" "$md5")"-$md5.job"
 			torrent_log="$target_directory/${torrent_directory:+$torrent_directory/}${torrent_job}"
 			torrent_btih=$($ttool torrent-hash "$torrent_abspath")
-			filename="$(get_filename $md5)"
 
 			cat <<- EOT > "$torrent_log"
 			#!/usr/bin/env bash
 			# command: "$ttool add-selective $torrent_abspath $md5"
 			tdir="$torrent_download_directory"
 			tpath="$torrent_filepath"
-			dest="$target_directory/$filename"
+			dest="$target_directory/$dest_filename"
 			btih="$torrent_btih"
 			ttool="$ttool"
 			cronjob_remove () {
@@ -668,7 +664,7 @@ dl_src_torrent () {
 			copy_file () {
 			    if [[ -f "$tdir/$tpath" ]]; then
 				if check_md5 "$tdir/$tpath"; then
-				    cp "$tdir/$tpath" "$dest"
+				    install -D "$tdir/$tpath" "$dest"
 				else
 				    false
 				fi
@@ -881,8 +877,10 @@ get_torrent () {
 	[[ -n "$id" ]] && echo "$((id-id%1000))"
 }
 
+# this creates leading directories when called with 2 parameters (value of $2 does not matter)
 get_filename () {
 	md5="$1"
+	create="$2"
 	db="${programs[$program]}"
 
 	filename=$(get_attr "filename" "$db" "$md5")
@@ -890,7 +888,16 @@ get_filename () {
 	# trim overly long filenames to 255 characters
 	[[ ${#filename} -gt 255 ]] && filename="${filename:0:126}...${filename: -126}"
 
-	[[ -n "$filename" ]] && echo "$filename"
+	if [[ -n $filename ]]; then
+		if [[ -n $use_deep_path ]]; then
+			dirname="${dirprefix[$db]}/$(get_attr 'dirname' "$db" "$md5")"
+			if [[ -n $dirname && -n $create ]]; then
+				mkdir -p "${target_directory}/${dirname}"
+				filename="${dirname}/${filename}"
+			fi
+		fi
+		echo "$filename"
+	fi
 }
 
 get_torrentpath () {
@@ -944,7 +951,7 @@ ${query_result[12]}" \
 			dialog_exit=$?
 			exec 3>&-
 			if [[ $dialog_exit -eq 0 ]]; then
-				dl_src_${db} "${md5}" "${filename}"
+				download "${db}" "${md5}"
 			fi
 		fi
 	fi
@@ -965,7 +972,7 @@ Title: ${query_result[1]}
 Volume: ${query_result[2]} Series: ${query_result[3]} Edition: ${query_result[4]}
 Year: ${query_result[5]} Publisher: ${query_result[6]}
 Language: ${query_result[7]} Size: ${query_result[8]} Type: ${query_result[9]}
-OLID: ${query_reslt[10]} ISBN: ${query_result[11]} MD5: ${md5^^}
+OLID: ${query_result[10]} ISBN: ${query_result[11]} MD5: ${md5^^}
 
 Filename: ${filename}
 
@@ -974,7 +981,7 @@ ${query_result[12]}" \
 			whiptail_exit=$?
 			exec 3>&-
 			if [[ $whiptail_exit -eq 0 ]]; then
-				dl_src_${db} "$md5" "$filename"
+				download "${db}" "${md5}"
 			fi
 		fi
 	fi
@@ -992,7 +999,7 @@ preview_zenity () {
 			info="<table><tr><td><b>Author</b>:</td><td colspan='5'>${query_result[0]}</td></tr><tr><td><b>Title</b>:</td><td colspan='5'>${query_result[1]}</td></tr><tr><td><b>Volume</b>:</td><td>${query_result[2]}</td><td><b>Series</b>:</td><td>${query_result[3]}</td><td><b>Edition</b>:</td><td>${query_result[4]}</td></tr><tr><td><b>Year</b>:</td><td>${query_result[5]}</td><td><b>Publisher</b>:</td><td>${query_result[6]}</td></tr><tr><td><b>Language</b>:</td><td>${query_result[7]}</td><td><b>Size</b>:</td><td>${query_result[8]}</td><td><b>Type</b>:</td><td>${query_result[9]}</td></tr><tr><td><b>OLID</b>:</td><td>${query_reslt[10]}</td><td><b>ISBN</b>:</td><td>${query_result[11]}</td><td><b>MD5</b>:</td><td>${md5^^}</td></tr></table><span style='font-size:x-small;'><pre>${filename}</pre></span><hr><table><tr><td style='width:25%;'><img style='width:95%;' src='${coverurl[$db]}/${query_result[13]}'></td><td style='vertical-align:top;'>$(strip_html ${query_result[12]})</td></tr></table>"
 			zenity_result=$(echo "$info"|zenity --width $x_size --height $y_size --text-info --html --ok-label "Download" --cancel-label "Skip" --filename=/dev/stdin 2>/dev/null)
 			if [[ $? -eq 0 ]]; then
-				dl_src_${db} "$md5" "$filename"
+				download "${db}" "${md5}"
 			fi
 		fi
 	fi
@@ -1011,7 +1018,7 @@ preview_yad () {
                         yad_result=$(echo "$info"|yad --width $x_size --height $y_size --html --button='gtk-cancel:1' --button='Download!filesave!Download this publication:0' --filename=/dev/stdin 2>/dev/null)
 			yad_return=$?
                         if [[ $yad_return -eq 0 ]]; then
-                                dl_src_${db} "$md5" "$filename"
+				download "${db}" "${md5}"
                         fi
                 fi
         done
