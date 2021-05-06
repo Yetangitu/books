@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-version="0.6"
-release="20200805"
+version="0.6.1"
+release="20210506"
 
 trap "trap_error" TERM
 trap "trap_exit" EXIT
@@ -25,7 +25,8 @@ main () {
 	limit=1000
 
 
-	api="http://gen.lib.rus.ec/json.php"
+	api="http://libgen.rs/json.php"
+	#api="http://gen.lib.rus.ec/json.php"
 	#api="http://libgen.io/json.php"
 	#api="http://libgen.lc/json.php"
 	#api="http://libgen.unblocked.tv/json.php"

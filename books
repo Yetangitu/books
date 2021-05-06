@@ -5,8 +5,8 @@ trap "trap_error" TERM
 trap "trap_clean" EXIT
 export TOP_PID=$$
 
-version="0.6.5"
-release="20200816"
+version="0.7.0"
+release="20210506"
 
 main () {
 	# PREFERENCES
@@ -111,6 +111,12 @@ main () {
 		[libgen_fiction]='http://93.174.95.29/fictioncovers'
 	)
 
+	# download archives
+	declare -A downloadurl=(
+		[libgen]="http://93.174.95.29/main"
+		[libgen_fiction]="http://93.174.95.29/fiction"
+	)
+
 	# torrent archives
 	declare -A torrenturl=(
 		[libgen]='http://gen.lib.rus.ec/repository_torrent'
@@ -128,6 +134,9 @@ main () {
 		[libgen]="nonfiction"
 		[libgen_fiction]="fiction"
 	)
+
+	# ipfs gateway
+	ipfs_gw="https://cloudflare-ipfs.com"
 
         # source config file if it exists
         [[ -f ${config} ]] && source "${config}"
@@ -170,6 +179,7 @@ main () {
 		[filename]="sed -e 's/[^-[:alnum:]:;?!.,+@#%]/_/g;s/^\([-_]\)*//'"
 		[dirname]="sed -e 's/[^-[:alnum:]:;?!/.,+@#%]/_/g;s/^\([-_]\)*//'"
 		[id]="cat"
+		[ipfs_cid]="cat"
 		[extension]="cat"
 		[attributes]="cat"
 		[preview_dialog]="cat"
@@ -180,8 +190,9 @@ main () {
 
 	# GETOPT config
 	# remove captital M from options (tr -d 'm ') to allow it to be used for fast path search
-	search_options='@('$(echo "${!schema[@]}"|tr ' ' '|')'|'$(echo "${!schema[@]}"|tr -d 'm '|tr ' ' '|'|tr '[:lower:]' '[:upper:]')')'
-	search_getopts="$(echo "${!schema[@]}"|tr ' ' ':'):$(echo "${!schema[@]}"|tr -d 'm '|tr ' ' ':'|tr '[:lower:]' '[:upper:]'):"
+	# remove capital I from options (tr -d 'i ') to allow it to be used for use_ipfs
+	search_options='@('$(echo "${!schema[@]}"|tr ' ' '|')'|'$(echo "${!schema[@]}"|tr -d 'm '|tr -d 'i '|tr ' ' '|'|tr '[:lower:]' '[:upper:]')')'
+	search_getopts="$(echo "${!schema[@]}"|tr ' ' ':'):$(echo "${!schema[@]}"|tr -d 'm '|tr -d 'i '|tr ' ' ':'|tr '[:lower:]' '[:upper:]'):"
 
 	# X11-related config
 	if xset q &>/dev/null; then
@@ -231,7 +242,7 @@ main () {
 
 	# PROCESS OPTIONS AND BUILD QUERY
 
-	while getopts ":${search_getopts}fF:hkx#:@wu:U:=:j:J:M:$" OPTION
+	while getopts ":${search_getopts}fF:hkx#:@wu:I:U:=:j:J:M:$" OPTION
 	do
 		case $OPTION in
 			$search_options)
@@ -272,6 +283,7 @@ main () {
 					if [[ -n "$torrent_tools" ]]; then
 						if find_tool $torrent_tools >/dev/null;then 
 							use_torrent=1
+							unset use_ipfs
 						else
 							exit_with_error "-u: torrent helper script ($torrent_tools) not found"
 						fi
@@ -282,6 +294,16 @@ main () {
 					unset use_torrent
 				fi
 				;;
+
+			I)
+				if is_true "$OPTARG"; then
+					use_ipfs=1
+					unset use_torrent
+				else
+					unset use_ipfs
+				fi
+				;;
+
 			U)
 				get_torrentpath "${OPTARG}"
 				exit
@@ -478,8 +500,11 @@ download () {
 
 			if is_true "$use_torrent"; then
 				dl_src_torrent "$db" "$md5" "$filename"
+			elif is_true "$use_ipfs"; then
+				dl_src_ipfs "$db" "$md5" "$filename"
 			else
-				dl_src_${db} "$md5" "$filename"
+				dl_src_direct "$db" "$md5" "$filename"
+				# dl_src_${db} "$md5" "$filename"
 			fi
 		fi
 	done
@@ -509,7 +534,7 @@ get_file () {
 		;;
 
 	wget)
-		wget --user-agent "$user_agent" -O "$target_directory/$filename" "${url}" -o "${tmpdir}/progress" --progress=bar:force &
+		wget --no-use-server-timestamps --user-agent "$user_agent" -O "$target_directory/$filename" "${url}" -o "${tmpdir}/progress" --progress=bar:force &
 		echo $! >"${tmpdir}/dl_pid"
 		;;
 	*)
@@ -557,13 +582,26 @@ get_file () {
 	rm -rf "${tmpdir}"
 }
 
-dl_src_libgen () {
+
+dl_src_direct () {
+	db="$1"
+	shift
 	md5="$1"
 	shift
 	filename="$*"
-	db='libgen'
 
-	url="http://93.174.95.29/main/$(get_torrent ${db} ${md5})/${md5,,}/placeholder"
+	case "$db" in
+		libgen)
+			url="${downloadurl[$db]}/$(get_torrent ${db} ${md5})/${md5,,}/placeholder"
+			;;
+		libgen_fiction)
+			extension=$(get_attr 'extension' "${db}" "${md5}")
+			url="${downloadurl[$db]}/$(get_torrent ${db} ${md5})/${md5,,}.${extension,,}/placeholder"
+			;;
+		*)
+			exit_with_error "no direct download available for $db"
+			;;
+	esac
 
 	if ! url_available "$url"; then
 
@@ -571,37 +609,31 @@ dl_src_libgen () {
 		parser=$(find_tool "$parser_tools")
 
 		if [[ $parser == "xidel" ]]; then
-			url=$(xidel --user-agent "$user_agent" -s "http://93.174.95.29/main/${md5}" -e '//td[@id="info"]/h2/a/@href');
+			url=$(xidel --user-agent "$user_agent" -s "${downloadurl[$db]}/${md5}" -e '//td[@id="info"]/h2/a/@href');
 		elif [[ $parser == "hxwls" ]]; then
-			url=$(hxwls 'http://93.174.95.29/main/'"${md5}"|head -2|tail -1)
+			url=$(hxwls "${downloadurl[$db]}/${md5}"|head -2|tail -1)
 		fi
 	fi
 
 	[[ -n "$url" ]] && get_file "'${filename}'" "${url}"
 }
 
-dl_src_libgen_fiction () {
+dl_src_ipfs () {
+	db="$1"
+	shift
 	md5="$1"
 	shift
 	filename="$*"
-	db='libgen_fiction'
 
-	extension=$(get_attr 'extension' 'libgen_fiction' "${md5}")
-	url="http://93.174.95.29/fiction/$(get_torrent ${db} ${md5})/${md5,,}.${extension,,}/placeholder"
+	ipfs_cid=$(get_attr 'ipfs_cid' "${db}" "${md5}")
 
-	if ! url_available "$url"; then
-
-		url=""
-		parser=$(find_tool "$parser_tools")
-
-		if [[ $parser == "xidel" ]]; then
-			url=$(xidel --user-agent "$user_agent" -s "http://93.174.95.29/fiction/${md5}" -e '//td[@id="info"]/h2/a/@href');
-		elif [[ $parser == "hxwls" ]]; then
-			url=$(hxwls 'http://93.174.95.29/fiction/'"${md5}"|head -2|tail -1)
-		fi
+	if [[ -z $ipfs_cid ]]; then
+		echo "ipfs_cid not found, trying direct download..."
+		dl_src_${db} "${md5}" "${filename}"
+	else
+		url="${ipfs_gw}/ipfs/${ipfs_cid}"
+		get_file "'${filename}'" "${url}"
 	fi
-
-	[[ -n $url ]] && get_file "'${filename}'" "${url}"
 }
 
 dl_src_torrent () {
@@ -1180,9 +1212,15 @@ prepare_sql () {
 	)
 
 	# get hashes
-	declare sql_sha1s=(
+	declare -A sql_sha1s=(
 		[libgen]="select sha1 from hashes where md5='$md5' limit 1;"
 		[libgen_fiction]="select sha1 from fiction_hashes where md5='$md5' limit 1;"
+	)
+
+	# get ipfs content id hash
+	declare -A sql_ipfs_cid=(
+		[libgen]="select ipfs_cid from hashes where md5='${md5}' limit 1;"
+		[libgen_fiction]="select ipfs_cid from fiction_hashes where md5='${md5}' limit 1;"
 	)
 
 	# preview publication...
@@ -1330,6 +1368,10 @@ check_settings () {
 			exit_with_error "-u: torrent helper script ($torrent_tools) not found"
 		fi
 	fi
+
+	if [[ "$use_torrent" && "$use_ipfs" ]]; then
+		exit_with_error "can not use_torrent and use_ipfs at the same time, check $config"
+	fi
 }
 
 # echo error message to stdout and terminate main
@@ -1441,13 +1483,19 @@ help () {
 	    -= DIR	set download location to DIR
 
 	    -$		use extended path when downloading:
-			    nonfiction/[topic/]author[/series]/title
-			    fiction/language/author[/series]/title
+	 		    nonfiction/[topic/]author[/series]/title
+	 		    fiction/language/author[/series]/title
 
 	    -u BOOL	use bittorrent (-u 1 or -u y) or direct download (-u 0 or -u n)
 	 		this parameter overrides the default download method
 	 		bittorrent download depends on an external helper script
 	 		to interface with a bittorrent client
+
+	    -I BOOL	use ipfs (-I 1 or -I y) or direct download (-I 0 or -I n)
+	 		this parameter overrides the default download method
+	 		ipfs download depends on a functioning ipfs gateway.
+	 		default gateway is hosted by Cloudfront, see https://ipfs.io/
+	 		for instructions on how to run a local gateway
 
 	    -U MD5	print torrent path (torrent#/md5) for given MD5
 

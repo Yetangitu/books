@@ -100,6 +100,12 @@ OPTIONS
  		bittorrent download depends on an external helper script
  		to interface with a bittorrent client
 
+    -I BOOL	use ipfs (-I 1 or -I y) or direct download (-I 0 or -I n)
+ 		this parameter overrides the default download method
+ 		ipfs download depends on a functioning ipfs gateway.
+ 		default gateway is hosted by Cloudfront, see https://ipfs.io/
+ 		for instructions on how to run a local gateway
+
     -U MD5	print torrent path (torrent#/md5) for given MD5
 
     -j MD5	print filename for given MD5
@@ -522,12 +528,13 @@ main () {
         )
 ```
 
-The same goes for the 'PREFERENCES' sections in `update_libgen` and `refresh_libgen`. In most cases the only parameters which might need change are `dbhost`, `dbuser`, `torrent_download_directory` and possibly `torrent_tools`. Since all programs use a common `books.conf` config file it is usually sufficient to add these parameters there:
+The same goes for the 'PREFERENCES' sections in `update_libgen` and `refresh_libgen`. In most cases the only parameters which might need change are `dbhost`, `dbuser`, `ipfs_gw` (if you don't want to use the default hosted by Cloudfront), `torrent_download_directory` and possibly `torrent_tools`. Since all programs use a common `books.conf` config file it is usually sufficient to add these parameters there:
 
 ```bash
 $ cat $HOME/.config/books.conf
 dbhost="base.example.org"
 dbuser="exampleuser"
+ipfs_gw="http://ipfs.example.org"
 torrent_download_directory="/net/p2p/incoming"
 torrent_tools="tm"
 ```
