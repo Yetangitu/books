@@ -15,7 +15,7 @@ The database can be searched in two modes, per-field (the default) and fulltext 
 
 In the (default) per-field search mode the database can be searched for patterns (SQL 'like' operator with leading and trailing wildcards) using lower-case options and/or exact matches using upper-case options. The fulltext search by necessity always uses pattern matching over the indicated fields ('title' and 'author' if no other fields are specified).
 
-Publications can be downloaded using torrents or from libgen download mirror servers by selecting them in the result list or by using the 'Download' button in the preview window, the `books` and `fiction` tools can be used to download publications based on their MD5 hash (use `-J ...`). When using the gui-based tools in combination with the 'yad' tool, double-clicking a row in the result list shows a preview, the other tools generate previews for selected publications using the '-w' command line option.
+Publications can be downloaded using IPFS, through torrents or from libgen download mirror servers by selecting them in the result list or by using the 'Download' button in the preview window, the `books` and `fiction` tools can be used to download publications based on their MD5 hash (use `-J ...`). When using the gui-based tools in combination with the 'yad' tool, double-clicking a row in the result list shows a preview, the other tools generate previews for selected publications using the '-w' command line option.
 
 See [Installation](#installation) for information on how to install *books*.
 
@@ -25,7 +25,7 @@ I'll let the programs themselves do the talking:
 
 ```txt
 $ books -h
-books version 0.6
+books version 0.7
 
 Use: books OPTIONS [like] [<PATTERN>]
 
@@ -255,9 +255,21 @@ Performs a refresh from a database dump file for the chosen libgen databases.
     -h		this help message
 ```
 
-## Torrents, direct download...
+## IPFS, Torrents, direct download...
 
-*Books* (et al) can download files either from torrents (using `-u y` or `-u 1`) or from one of the libgen download mirrors (default, use`-u n` or `-u 0` in case torrent download is set as default). To limit the load on the download servers it is best to use torrents whenever possible. The latest publications are not yet available through torrents since those are only created for batches of 1000 publications. The feasibility of torrent download also depends on whether the needed torrents are seeded. Publications which can not be downloaded through torrents can be downloaded directly.
+*Books* (et al) can download files either through IPFS (using `-I 1` or `-I y`), from torrents (using `-u y` or `-u 1`) or from one of the libgen download mirrors (default, use `-I n`/`-u n` or `-I 0`/`-u 0` in case IPFS or torrent download is set as default). To limit the load on the download servers it is best to use IPFS or torrents whenever possible. The latest publications are not yet available through IPFS or torrents since those are only created for batches of 1000 publications. The feasibility of torrent download also depends on whether the needed torrents are seeded while for IPFS download a working IPFS gateway is needed. Publications which can not be downloaded through IPFS or torrents can be downloaded directly.
+
+### IPFS download process
+IPFS download makes use of an IPFS gateway, by default this is set to Cloudflare's gateway:
+
+```
+        # ipfs gateway
+        ipfs_gw="https://cloudflare-ipfs.com"
+```
+
+This can be changed in the config file (usually `$HOME/.config/books.conf`)
+
+The actual download works exactly the same as the direct download, only the source is changed from a direct download server to the IPFS gateway. Download speed depends on whether the gateway has the file in cache or not, in the latter case it can take a bit more time - be patient.
 
 ### Torrent download process
 Torrent download works by selecting individual files for download from the 'official' torrents, i.e. it is *not* necessary to download the whole torrent for a single publication. This process is automated by means of a helper script which is used to interface *books* with a torrent client. Currently the only torrent client for which a helper script is available is *transmission-daemon*, the script uses the related *transmission-remote* program to interface with the daemon. Writing a helper script should not be that hard for other torrent clients as long as these can be controlled through the command line or via an API.
