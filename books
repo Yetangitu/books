@@ -119,8 +119,8 @@ main () {
 
 	# torrent archives
 	declare -A torrenturl=(
-		[libgen]='http://gen.lib.rus.ec/repository_torrent'
-		[libgen_fiction]='http://gen.lib.rus.ec/fiction/repository_torrent'
+		[libgen]='http://libgen.rs/repository_torrent'
+		[libgen_fiction]='http://libgen.rs/fiction/repository_torrent'
 	)
 
 	# torrent file name prefixes

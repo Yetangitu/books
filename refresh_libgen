@@ -24,7 +24,7 @@ main () {
 
 	# where to get updates. A change here probably necessitates a change in the urls array
 	# as dump file names can be site-specific. 
-	base="http://gen.lib.rus.ec/dbdumps/"
+	base="http://libgen.rs/dbdumps/"
 	#base="https://lgdumps.xyz/dumps/"
 
 	# database names
