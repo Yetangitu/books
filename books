@@ -494,7 +494,7 @@ download () {
 	shift
 	for md5 in $@; do
 
-		filename=$(get_filename "$md5")
+		filename=$(get_filename "$md5" "$use_deep_path")
 
 		if [[ -n "$filename" ]]; then
 
@@ -1189,7 +1189,7 @@ prepare_sql () {
 
 	# build directory names...
 	declare -A sql_dirname=(
-	[libgen]="select concat_ws('/', trim(language), regexp_replace(trim(topic_descr),'"'[\\\\]+'"','/'), trim(Author), trim(Series)) as dirname from updated as u left join topics as t on u.topic=t.topic_id and t.lang='${language}' where md5='${md5}' limit 1;"
+		[libgen]="select concat_ws('/', trim(language), regexp_replace(trim(topic_descr),'"'[\\\\]+'"','/'), trim(Author), trim(Series)) as dirname from updated as u left join topics as t on u.topic=t.topic_id and t.lang='${language}' where md5='${md5}' limit 1;"
 		[libgen_fiction]="select concat_ws('/', trim(language), trim(Author), trim(Series)) as dirname from fiction where md5='${md5}' limit 1;"
 	)
 
