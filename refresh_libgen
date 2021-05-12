@@ -1,15 +1,26 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034,SC1090
 #
 # refresh libgen databases from dump files
 
-version="0.6.1"
-release="20200805"
+version="0.6.2"
+release="20210512"
 
 trap "trap_error" TERM
-trap "trap_exit" EXIT
+trap "trap_clean" EXIT
 export TOP_PID=$$
 
+functions="$(dirname "$0")/books_functions"
+if [ -f "$functions" ]; then
+        source "$functions"
+else
+        echo "$functions not found"
+        exit 1              
+fi
+
 main () {
+
+	exlock now || exit 1
 
 	# PREFERENCES
 	config=${XDG_CONFIG_HOME:-$HOME/.config}/books.conf
@@ -25,7 +36,6 @@ main () {
 	# where to get updates. A change here probably necessitates a change in the urls array
 	# as dump file names can be site-specific. 
 	base="http://libgen.rs/dbdumps/"
-	#base="https://lgdumps.xyz/dumps/"
 
 	# database names
 	declare -A databases=(
@@ -35,7 +45,7 @@ main () {
 	)
 
 	# source config file if it exists
-	[[ -f ${config} ]] && source ${config}
+	[[ -f ${config} ]] && source "${config}"
 
 	# (mostly) END OF PREFERENCES
 
@@ -77,7 +87,11 @@ main () {
 
 	tmpdir=$(mktemp -d /var/tmp/libgen.XXXXXX)
 
-	while getopts "cd:efhH:knp:P:R:u:U:v@" OPTION
+	unrar=$(find_tool "unrar")
+	wget=$(find_tool "wget")
+	w3m=$(find_tool "w3m")
+
+	while getopts "a:cd:efhH:knP:u:U:v@" OPTION
 	do
 	case $OPTION in
 		n)
@@ -97,6 +111,7 @@ main () {
 			fi
 			;;
 		v)
+			pv=$(find_tool "pv")
 			verbose="_verbose"
 			;;
 		H)
@@ -107,13 +122,6 @@ main () {
 			;;
 		U)
 			dbuser="${OPTARG}"
-			;;
-		p)
-			password="${OPTARG}"
-			if [[ -z $password ]]; then
-				password=$(read_password)
-				echo
-			fi
 			;;
 		c)
 			if [[ ! -f "${config}" ]]; then
@@ -147,8 +155,7 @@ main () {
 			fi
 			;;
 		@)
-			use_torsocks=1
-			source $(which torsocks) on
+			torsocks=$(find_tool "torsocks")
 			;;
 		k)
 			keep_downloaded_files=1
@@ -157,40 +164,36 @@ main () {
 			help
 			exit
 			;;
+		*)
+			exit_with_error "unknown option: $OPTION"
+			;;
 	esac
 	done
 
-	check_sanity
+	[[ -z ${dbs} ]] && dbs="${!databases[*]}"
 
-	[[ -n ${password} ]] && dbpass="-p${password}"
-
-	# skip credential check when using password prompt option - password will be asked often enough as it is...
-	[[ ${dbpass} != "-p" ]] && check_credentials
-
-	[[ -z ${dbs} ]] && dbs="${!databases[@]}"
-
-	pushd $tmpdir >/dev/null
+	pushd "$tmpdir" >/dev/null || exit_with_error "can not change directory to $tmpdir"
 	for db in ${dbs}; do
 		database=${databases[$db]}
 		if [[ $(db_exists "$database") ]]; then
-			db_dump=$(is_available ${db} ${max_age})
+			db_dump=$(is_available "${db}" "${max_age}")
 			if [[ -n $db_dump ]]; then
 				[[ -n $verbose ]] && echo "update available for ${db}: ${db_dump}"
 				if [[ -z ${no_action} ]]; then
-					wget ${options[wget${verbose}]} ${db_dump}
-					unrar ${options[unrar${verbose}]} x $(basename ${db_dump})
-					[[ -n "${filter[$db]}" ]] && run_filter $(unrar lb $(basename ${db_dump})) "${filter[$db]}"
+					$torsocks "$wget" "${options[$wget${verbose}]}" "${db_dump}"
+					$unrar "${options[$unrar${verbose}]}" x "$(basename "${db_dump}")"
+					[[ -n "${filter[$db]}" ]] && run_filter "$($unrar lb "$(basename "${db_dump}")")" "${filter[$db]}"
 					drop_tables=$(drop_table_sql "${database}")
-					[[ -n $drop_tables ]] && dbx ${database} "${drop_tables}"
-					[[ -n ${before_update[$db]} ]] && dbx ${database} "${before_update[$db]}"
+					[[ -n $drop_tables ]] && dbx "${database}" "${drop_tables}"
+					[[ -n ${before_update[$db]} ]] && dbx "${database}" "${before_update[$db]}"
 					[[ -n ${filter[$db]} ]] && filter_command="|sed -e '${filter[$db]}'"
 					if [[ -n $verbose ]]; then
-						echo "importing $(basename ${db_dump}) into ${database}"
-						pv $(unrar lb $(basename ${db_dump})) | dbx ${database}
+						echo "importing $(basename "${db_dump}") into ${database}"
+						$pv "$($unrar lb "$(basename "${db_dump}")")" | dbx "${database}"
 					else
-						dbx ${database} < $(unrar lb $(basename ${db_dump}))
+						dbx "${database}" < "$($unrar lb "$(basename "${db_dump}")")"
 					fi
-					[[ -n ${after_update[$db]} ]] && dbx ${database} "${after_update[$db]}"
+					[[ -n ${after_update[$db]} ]] && dbx "${database}" "${after_update[$db]}"
 				fi
 			else
 				[[ -n $verbose ]] && echo "no update available for ${db}"
@@ -199,20 +202,8 @@ main () {
 			echo "database '$database' does not exist, please create it before attempting to refresh" >&2
 		fi
 	done
-	popd >/dev/null
+	popd >/dev/null || exit_with_error "popd failed?"
 }
-
-dbx () {
-	database=$1
-	shift
-
-        if [ $# -gt 0 ]; then
-                mysql -Bsssss -h ${dbhost} -P ${dbport} -u ${dbuser} ${dbpass} ${database} -e "$*"
-        else
-                mysql -Bsssss -h ${dbhost} -P ${dbport} -u ${dbuser} ${dbpass} ${database}
-        fi
-}
-
 
 # check whether there is a dump file which is more recent than the current database and no older
 # than $max_age
@@ -220,30 +211,30 @@ is_available () {
         db="$1"
         max_age="$2"
 
-	db_age=$(db_age $db)
+	db_age=$(db_age "$db")
 
 	age=0
 
 	while [[ $age -lt $db_age && $age -lt $max_age ]]; do
-		timestamp=$(date -d "@$(($(date +%s) - $((60*60*24*$age))))" +%Y-%m-%d)
-        	result=$(w3m -dump ${base} | awk '{ print $1 }'|grep $(basename "${urls[$db]}_${timestamp}.rar"))
+		timestamp=$(date -d "@$(($(date +%s) - $((60*60*24*age))))" +%Y-%m-%d)
+        	result=$($w3m -dump "${base}" | awk '{ print $1 }'|grep "$(basename "${urls[$db]}_${timestamp}.rar")")
 		[[ -n $result ]] && break
-		let age+=1
+		((age++))
 	done
 
-    [[ -n $result ]] && echo $(dirname ${urls[$db]})/${result}
+    [[ -n $result ]] && echo "$(dirname "${urls[$db]}")"/"${result}"
 }
 
 # drop tables to prepare database for refresh
 drop_table_sql () {
         database="$1"
-	dbx "$database" "SELECT concat('DROP TABLE IF EXISTS ', table_name, ';') FROM information_schema.tables WHERE table_schema = '$dbname';"
+	dbx "$database" "SELECT concat('DROP TABLE IF EXISTS ', table_name, ';') FROM information_schema.tables WHERE table_schema = '$database';"
 }
 
 # returns database name if it exists, nothing otherwise
 db_exists () {
 	database="$1"
-	dbx $database "select schema_name from information_schema.schemata where schema_name='$database';" 2>/dev/null
+	dbx "$database" "select schema_name from information_schema.schemata where schema_name='$database';" 2>/dev/null
 }
 
 # return database age in days
@@ -254,8 +245,8 @@ db_age () {
 	if [[ "$force_refresh" -gt 0 ]]; then
 		age=$max_age
 	else
-		db_last_modified=$(date -d "$(dbx $database ${lastmodified[$db]})" +%s)
-		age=$(((${now}-${db_last_modified})/60/60/24))
+		db_last_modified=$(date -d "$(dbx "$database" "${lastmodified[$db]}")" +%s)
+		age=$(((now-db_last_modified)/60/60/24))
 	fi
 	echo -n $age
 }
@@ -263,51 +254,11 @@ db_age () {
 # run filter on dump
 run_filter () {
 	dump_file="$1"
-	filter="$2"
+	flt="$2"
 	if [[ -n $verbose ]]; then
-		echo "running '$filter' on '$dump_file'"
+		echo "running '$flt' on '$dump_file'"
 	fi
-	sed -i -e "$filter" "$dump_file"
-}
-
-# find tool, returns the first|one|found, exit with error message if none found
-find_tool () {
-        IFS='|' read -ra tools <<< "$*"
-
-        found=0
-
-        for tool in "${tools[@]}"; do
-                if [[ -n $(which "$tool") ]]; then
-                        found=1
-                        break
-                fi
-        done
-
-        if [[ $found -eq 0 ]]; then
-                if [[ ${#tools[@]} -gt 1 ]]; then
-                        exit_with_error "missing programs: $*; install at least one of these: ${tools[*]} and try again"
-                else
-                        exit_with_error "missing program: $1; please install and try again"
-                fi
-        fi
-
-        echo "$tool"
-}
-
-# read password from command line
-read_password () {
-	password=""
-	prompt="Enter database password:"
-	while IFS= read -p "$prompt" -r -s -n 1 char
-	do
-	    if [[ $char == $'\0' ]]
-	    then
-		break
-	    fi
-	    prompt='*'
-	    password+="$char"
-	done
-	echo "$password"
+	sed -i -e "$flt" "$dump_file"
 }
 
 check_credentials () {
@@ -318,48 +269,27 @@ check_credentials () {
 
 url_available () {
 	url="$1"
-	wget -q --spider "$url"
-}
-
-check_sanity () {
-	find_tool "w3m" > /dev/null
-	find_tool "wget" > /dev/null
-	find_tool "unrar" > /dev/null
-	[[ -n $verbose ]] && find_tool "pv" > /dev/null
+	$torsocks "$wget" -q --spider "$url"
 }
 
 cleanup () {
         if [[ ! -v keep_downloaded_files ]]; then
-            rm -rf ${tmpdir}
+            rm -rf "${tmpdir}"
         else
             echo "-k option active, temporary directory ${tmpdir} not removed"
         fi
 }
 
-trap_error () {
-        cleanup
-        exit 1
-}
-
-trap_exit () {
-        cleanup
-        exit
-}
-
-# echo error message to stdout and terminate main
-exit_with_error () {
-	echo "$(basename $0): $*" >&2
-
-        kill -s TERM $TOP_PID
-}
-
 help () {
-        echo $(basename $(readlink -f $0)) "version $version"
+        echo "$(basename "$(readlink -f "$0")")" "version $version"
         cat <<- EOT
 
 	Usage: refresh_libgen OPTIONS
 
 	Performs a refresh from a database dump file for the chosen libgen databases.
+
+	Make sure the database credentials are configured (in \$HOME/.my.cnf) before
+	using this tool.
 
 	    -n		do not refresh database
 	 		use together with '-v' to check if recent dumps are available
@@ -375,14 +305,13 @@ help () {
 	    -c 		create a config file using current settings (see -H, -P, -U, -R)
 	    -e		edit config file
 
-	    -p DBPASS	database password (cache password for this session)
-	 		use empty string ("") to get password prompt
-
 	    -@		use tor (through torsocks) to connect to libgen server
 	    -k		keep downloaded files after exit
 	    -h		this help message
 
 	EOT
 }
+
+exlock prepare || exit 1
 
 main "$@"
