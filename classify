@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+#shellcheck disable=SC2034,SC1090
+#
+# classify - return DDC, LCC for ISBN or MD5 (from libgen/libgen_fiction)
+
+shopt -s extglob  
+trap "trap_error" TERM
+trap "trap_clean" EXIT
+export TOP_PID=$$
+
+version="0.3.0"
+release="20210512"
+
+functions="$(dirname "$0")/books_functions"
+if [ -f "$functions" ]; then
+	source "$functions"
+else
+	echo "$functions not found"
+	exit 1
+fi
+
+main () {
+        # PREFERENCES
+        config=${XDG_CONFIG_HOME:-$HOME/.config}/books.conf
+	# OCLC classify API
+	oclc="http://classify.oclc.org/classify2/Classify"
+
+	declare -A API=(
+		[response]='/classify/response/@code'
+		[owi]='/classify/works/work[1]/@owi'
+		[ddc]='/classify/recommendations/ddc/mostPopular/@nsfa'
+		[lcc]='/classify/recommendations/lcc/mostPopular/@nsfa'
+		[nlm]='/classify/recommendations/nlm/mostPopular/@sfa'
+		[author]='/classify/work/@author'
+		[title]='/classify/work/@title'
+	)
+
+	declare -A filters=(
+		[filename]="sed -e 's/[^-[:alnum:]:;?!.,+@#%]/_/g;s/^\([-_]\)*//'"
+	)
+
+	declare -A tables=(
+		[libgen]="updated"
+		[libgen_fiction]="fiction"
+	)
+
+	xidel=$(find_tool "xidel")
+	curl=$(find_tool "curl")
+	xq="$xidel -s"
+
+	separator="-"
+	request=""
+
+	TMPDIR="/tmp"
+	xml=$(mktemp -p $TMPDIR classify.XXXXX)
+
+	# source config file if it exists
+	[[ -f ${config} ]] && source "${config}"
+
+	while getopts "odlnatS:FVAD:Q:@h" OPTION; do
+		case $OPTION in
+			o)
+				request="$request owi"
+				;;
+			d)
+				request="$request ddc"
+				;;
+			l)
+				request="$request lcc"
+				;;
+			n)
+				request="$request nlm"
+				;;
+			a)
+				request="$request author"
+				;;
+			t)
+				request="$request title"
+				;;
+			S)
+				separator="$OPTARG"
+				;;
+			V)
+				verbose=1
+				;;
+			F)
+				build_filename=1
+				;;
+			D)
+				db="$OPTARG"
+				;;
+			Q)
+				[ -z "$db" ] && exit_with_error "use -D to define which database to use"
+				build_sql=1
+				md5="$OPTARG"
+				isbn=$(get_identifier "$db" "$md5")
+				[ -z "$isbn" ] && exit_with_error "no identifier found in $db for MD5 = $md5"
+				;;
+			A)
+				request="author title owi ddc lcc nlm"
+				verbose=1
+				;;
+			@)
+				torsocks=$(find_tool "torsocks")
+				;;
+			h)
+				help
+				exit
+				;;
+
+			*)
+				exit_with_error "unknown option: $OPTION"
+				;;
+		esac
+	done
+
+	shift $((OPTIND-1))
+	[ -z "$isbn" ] && isbn="$1"
+
+	get_xml "$xml" "stdnbr=$isbn"
+	response=$(get "response" "$xml")
+
+	case "$response" in
+		0)
+			true
+			;;
+		2)
+			true
+			;;
+		4)
+			owi=$(get "owi" "$xml")
+			get_xml "$xml" "owi=$owi"
+			;;
+		100)
+			exit_with_error "no input"
+			;;
+		101)
+			exit_with_error "invalid input"
+			
+			;;
+		102)
+			exit_with_error "not found"
+			;;
+		200)
+			exit_with_error "unexpected error"
+			;;
+	esac
+
+	if [[ -n "$build_filename" ]]; then
+		build_filename "$xml"
+
+	elif [[ -n "$build_sql" ]]; then
+		build_sql "$db" "$md5" "$xml"
+	else
+		show_data "$request"
+	fi
+}
+
+get_xml () {
+	xml="$1"
+	shift
+	query="$*"
+	$torsocks "$curl" -s "${oclc}?summary=true&${query}" --output "$xml"
+}
+
+get () {
+	parameter="$1"
+	xml="$2"
+	shift 2
+	filter="$*"
+	[[ -z "$filter" ]] && filter='cat -'
+	$xq "$xml" -e "${API[$parameter]}"|eval "$filter"
+}
+
+get_identifier () {
+	db="$1"
+	md5="$2"
+
+	declare -A sql_identifier=(
+		[libgen]="select IdentifierWODash from updated where md5='${md5}';"
+		[libgen_fiction]="select Identifier from fiction where md5='${md5}';"
+	)
+
+	sql="${sql_identifier[$db]}"
+	dbx "$db" "$sql"|cut -d ',' -f 1
+}
+
+show_data () {
+	request="$*"
+
+	for parameter in $request; do
+		data=$(get "$parameter" "$xml")
+		[[ -n "$verbose" ]] && legend="${parameter^^}:	"
+		[[ -n "$data" ]] && echo "${legend}${data}"
+	done
+}
+
+build_filename () {
+	xml="$1"
+
+	dirname=$(get "ddc" "$xml")
+	filename=$(get "author" "$xml" "${filters['filename']}")${separator}$(get "title" "$xml" "${filters['filename']}")
+	echo "${dirname}/${filename}"
+}
+
+build_sql () {
+	db="$1"
+	md5="$2"
+	xml="$3"
+
+	for parameter in ddc lcc; do
+		data=$(get "$parameter" "$xml")
+		if [[ -n "$data" ]]; then
+			updates="${updates}${updates:+, }${parameter^^}='${data}'"
+		fi
+	done
+
+	if [[ -n "$updates" ]]; then
+		if [ -n "$verbose" ]; then
+			echo '/*'
+			show_data "author title"
+			echo '*/'
+		fi
+
+		echo "update ${tables[$db]} set $updates where md5='$md5';"
+	fi
+}
+
+cleanup () {
+	base=$(basename "$xml")
+	rm -f "$TMPDIR/$base"
+}
+
+help () {
+	cat <<-EOHELP
+	$(basename "$(readlink -f "$0")") "version $version"
+
+	Use: classify [OPTIONS] identifier
+
+	Queries OCLC classification service for available data
+	Supports: DDC, LCC, NLM, Author and Title
+
+	Valid identifiers are ISBN, ISSN, UPC and OCLC/OWI
+
+	OPTIONS:
+
+	 	-d	show DDC
+	 	-l	show LCC
+	 	-n	show NLM
+	 	-a	show Author
+	 	-t	show Title
+
+	 	-F	create filename (DDC/Author-Title)
+
+	 	-Q md5	create SQL to update database
+	 		use -D libgen/-D libgen_fiction to indicate database
+	 		use with -V to add SQL comments with publication author
+	 		and title
+
+	 	-D db	define which database to use (libgen/libgen_fiction)
+
+	 	-A	show all available data for identifier
+
+	 	-o	show OCLC work index (owi)
+
+	 	-V	show labels
+	 	-S sep	change separator used to build filename (default: $separator)
+
+	 	-@	use torsocks to connect to the OCLC classify service.
+		 	use this to avoid getting your IP blocked by OCLC
+
+	 	-h	show this help message
+
+	Examples
+
+	$ classify -A 0199535760
+	AUTHOR: Plato | Jowett, Benjamin, 1817-1893 Translator; Editor; Other] ...
+	TITLE: The republic
+	DDC: 321.07
+	LCC: JC71
+
+	$ classify -Q 25b8ce971343e85dbdc3fa375804b538 0199535760
+	update updated set DDC='321.07', LCC='JC71' where md5='25b8ce971343e85dbdc3fa375804b538';
+
+
+	Classifying libgen/libgen_fiction
+
+	This tool can be used to add DDC and LCC classification data
+	to libgen and libgen_fiction databases. It does not directy
+	modify the database, instead producing SQL code which can be
+	used to apply the modifications. The best way to do this is
+	to produce a list of md5 hashes for publications which do
+	have Identifier values but lack values for DDC and/or LCC. Such
+	lists can be produced by the following SQL:
+	
+	   libgen: select md5 from updated where IdentifierWODash<>"" and DDC="";
+	   libgen_fiction: select md5 from fiction where Identifier<>"" and DDC="";
+	
+	Run these as batch jobs (mysql -B .... -e 'sql_code_here;' > md5_list), split
+	the resulting file in ~1000 line sections and feed these to this tool,
+	preferably with a random pause between requests to keep OCLC's intrusion
+	detection systems from triggering too early. It is advisable to use
+	this tool through Tor (using -@ to enable torsocks, make sure it
+	is configured correctly for your Tor instance) to avoid having too
+	many requests from your IP to be registered, this again to avoid
+	your IP being blocked. The OCLC classification service is not
+	run as a production service (I asked them).
+
+	EOHELP
+}
+
+main "$@"
