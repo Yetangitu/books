@@ -216,7 +216,6 @@ Usage: update_libgen OPTIONS
     -H DBHOST	database host
     -P DBPORT	database port
     -U DBUSER	database user
-    -p DBPASS	database password (use empty string to get a password prompt)
     -D DATABASE	database name
 
     -a APIHOST	use APIHOST as API server
@@ -456,6 +455,86 @@ tm can be configured by editing the script itself or the configuration file:
         tm_host="transmission-host.example.org:4081"
 
 values set in the configuration file override those in the script
+```
+
+
+## Classify
+The `classify` helper script supports the following options:
+
+```
+$ classify -h
+classify "version 0.3.0"
+
+Use: classify [OPTIONS] identifier
+
+Queries OCLC classification service for available data
+Supports: DDC, LCC, NLM, Author and Title
+
+Valid identifiers are ISBN, ISSN, UPC and OCLC/OWI
+
+OPTIONS:
+
+ 	-d	show DDC
+ 	-l	show LCC
+ 	-n	show NLM
+ 	-a	show Author
+ 	-t	show Title
+
+ 	-F	create filename (DDC/Author-Title)
+
+ 	-Q md5	create SQL to update database
+ 		use -D libgen/-D libgen_fiction to indicate database
+ 		use with -V to add SQL comments with publication author
+ 		and title
+
+ 	-D db	define which database to use (libgen/libgen_fiction)
+
+ 	-A	show all available data for identifier
+
+ 	-o	show OCLC work index (owi)
+
+ 	-V	show labels
+ 	-S sep	change separator used to build filename (default: -)
+
+ 	-@	use torsocks to connect to the OCLC classify service.
+ 	use this to avoid getting your IP blocked by OCLC
+
+ 	-h	show this help message
+
+Examples
+
+$ classify -A 0199535760
+AUTHOR: Plato | Jowett, Benjamin, 1817-1893 Translator; Editor; Other] ...
+TITLE: The republic
+DDC: 321.07
+LCC: JC71
+
+$ classify -Q 25b8ce971343e85dbdc3fa375804b538 0199535760
+update updated set DDC='321.07', LCC='JC71' where md5='25b8ce971343e85dbdc3fa375804b538';
+
+
+Classifying libgen/libgen_fiction
+
+This tool can be used to add DDC and LCC classification data
+to libgen and libgen_fiction databases. It does not directy
+modify the database, instead producing SQL code which can be
+used to apply the modifications. The best way to do this is
+to produce a list of md5 hashes for publications which do
+have Identifier values but lack values for DDC and/or LCC. Such
+lists can be produced by the following SQL:
+
+   libgen: select md5 from updated where IdentifierWODash<>"" and DDC="";
+   libgen_fiction: select md5 from fiction where Identifier<>"" and DDC="";
+
+Run these as batch jobs (mysql -B .... -e 'sql_code_here;' > md5_list), split
+the resulting file in ~1000 line sections and feed these to this tool,
+preferably with a random pause between requests to keep OCLC's intrusion
+detection systems from triggering too early. It is advisable to use
+this tool through Tor (using -@ to enable torsocks, make sure it
+is configured correctly for your Tor instance) to avoid having too
+many requests from your IP to be registered, this again to avoid
+your IP being blocked. The OCLC classification service is not
+run as a production service (I asked them).
 ```
 
 ## Installation
