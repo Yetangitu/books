@@ -301,7 +301,7 @@ help () {
 	    -H DBHOST	database host (${dbhost})
 	    -P DBPORT	database port (${dbport})
 	    -U DBUSER	database user (${dbuser})
-	    -R REPO	dump repository (${base})
+	    -a REPO	dump repository (${base})
 	    -c 		create a config file using current settings (see -H, -P, -U, -R)
 	    -e		edit config file
 

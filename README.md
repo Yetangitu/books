@@ -246,9 +246,6 @@ Performs a refresh from a database dump file for the chosen libgen databases.
     -c 		create a config file using current settings (see -H, -P, -U, -R)
     -e		edit config file
 
-    -p DBPASS	database password (cache password for this session)
- 		use empty string ("") to get password prompt
-
     -@		use tor (through torsocks) to connect to libgen server
     -k		keep downloaded files after exit
     -h		this help message

@@ -66,7 +66,7 @@ main () {
 	declare -A values=()
 	declare -A upsert=()
 
-	while getopts "a:D:j:hH:i:l:np:P:U:qs:t:u:v@" OPTION
+	while getopts "a:D:j:hH:i:l:nP:U:qs:t:u:v@" OPTION
 	do
 		case $OPTION in
 			j)
@@ -104,9 +104,6 @@ main () {
 				;;
 			U)
 				dbuser="${OPTARG}"
-				;;
-			p)
-				dbpass="-p${OPTARG}"
 				;;
 			D)
 				db="${OPTARG}"
@@ -417,7 +414,6 @@ help () {
 	    -H DBHOST	database host
 	    -P DBPORT	database port
 	    -U DBUSER	database user
-	    -p DBPASS	database password (use empty string to get a password prompt)
 	    -D DATABASE	database name
 
 	    -a APIHOST	use APIHOST as API server
