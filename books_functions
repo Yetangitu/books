@@ -1,0 +1,147 @@
+# shellcheck shell=bash disable=SC2154
+
+# UTITLITIES
+
+# find tool, returns the first|one|found, exit with error message if none found
+find_tool () {
+        IFS='|' read -ra tools <<< "$*"
+        
+        found=0
+                
+        for tool in "${tools[@]}"; do
+                if [[ -n $(which "$tool") ]]; then
+                        found=1
+                        break
+                fi
+        done
+        
+        if [[ "$found" -eq 0 ]]; then
+                if [[ ${#tools[@]} -gt 1 ]]; then
+                        exit_with_error "missing programs: $*; install at least one of these: ${tools[*]} and try again"
+                else
+                        exit_with_error "missing program: $1; please install and try again"
+                fi                  
+        fi   
+                          
+        echo "$tool"
+}
+
+url_available () {
+        url="$1"
+        dl_tool=$(find_tool "curl|wget")
+                    
+        case "$dl_tool" in
+                curl)
+                        ${torsocks:-} curl --output /dev/null --silent --fail -r 0-0 "$url"
+                        ;;
+                wget)
+                        ${torsocks:-} wget -q --spider "$url"
+                        ;;
+                *)
+                        exit_with_error "unknown download tool ${dl_tool}"
+                        ;;
+        esac
+}
+
+add_cron_job () {
+        job="$*"
+
+        (crontab -l ; echo "*/1 * * * * $job") 2>/dev/null | sort | uniq | crontab -
+}
+
+# leave <br> and <pre> to enable some simple formatting tasks
+strip_html () {
+        #echo "$*"|sed -e 's/<br>/\n/g;s/<[^>]*>//g;s/\n/<br>/g'
+        echo "$*"
+}
+
+is_true () {
+        val="${1,,}"
+        if [[ "${val:0:1}" == "y" || "$val" -gt 0 ]]; then
+                true
+        else
+                false
+        fi
+}
+
+# dummmy cleanup function
+cleanup () {
+	true
+}
+
+# echo error message to stderr and terminate main
+exit_with_error () {
+        echo -e "$(basename "$0"): $*" >&2
+
+        kill -s TERM "$TOP_PID"
+}
+
+trap_error () {
+	cleanup
+
+        exit 1
+}
+
+trap_clean () {
+	cleanup
+
+        exit
+}
+
+# DATABASE
+dbx () {
+        db="$1"
+        shift
+
+	mysql=$(find_tool "mysql")
+
+        if [ $# -gt 0 ]; then
+                "$mysql" -N -Bsss -h "$dbhost" -P "$dbport" -u "$dbuser" "$db" -e "$*"
+        else
+                "$mysql" -N -Bsss -h "$dbhost" -P "$dbport" -u "$dbuser" "$db"
+        fi
+}
+
+# LOCKING
+
+exlock () {
+	cmd="$1"
+
+	lockfile="/var/lock/$(basename "$0")"
+	lockfd=99
+
+	flock=$(find_tool "flock")
+
+	case "$cmd" in
+		prepare)
+			eval "exec $lockfd<>\"$lockfile\""
+			trap 'exlock nolock' EXIT
+			;;
+
+		now)
+			$flock -xn $lockfd
+			;;
+
+		lock)
+			$flock -x $lockfd
+			;;
+
+		shlock)
+			$flock -s $lockfd
+			;;
+
+		unlock)
+			$flock -u $lockfd
+			;;
+
+		nolock)
+			$flock -u $lockfd
+			$flock -xn $lockfd && rm -f "$lockfile"
+			trap_clean
+			;;
+
+		*)
+			exit_with_error "unknown lock command: $cmd"
+			;;
+	esac
+}
