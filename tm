@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034,SC1090,SC2207
 
 shopt -s extglob
 
 export TOP_PID=$$
 
 version="0.1.2"
-release="20200805"
+release="20210512"
 
 main () {
 	config=${XDG_CONFIG_HOME:-$HOME/.config}/tm.conf
 	netrc=~/.tm-netrc
-	tm_host="localhost:9091"
+	tm_host="localhost:4081"
 	# source config file if it exists
-        [[ -f ${config} ]] && source ${config}
+        [[ -f ${config} ]] && source "${config}"
 
 	declare -a commands=($(declare -F|grep tm_|sed -e 's/.*tm_\(\S\+\).*/\1/'))
 	declare -a programs=($(declare -F|grep tm_|sed -e 's/.*\(tm_\S\+\).*/\1/;s/_/-/g'))
@@ -53,26 +54,29 @@ main () {
 				help
 				exit
 				;;
+			*)
+				exit_with_error "unknown option $OPTION"
+				;;
 		esac
 	done
 
 	# shift out options
-	shift $((${OPTIND}-1))
+	shift $((OPTIND-1))
 
 	cmd="${1//-/_}"
-	program=$(basename $0)
+	program=$(basename "$0")
 
 	IFS='|'
 	if [[ $cmd =~ ${commands[*]} ]]; then
 		unset IFS
 		shift
-		tm_$cmd "$@"
+		tm_"$cmd" "$@"
 	elif [[ $program =~ ${programs[*]} ]]; then
 		unset IFS
 		${program//-/_} "$@"
 	else
 		unset IFS
-		exit_with_error "no such command: $cmd\navailable commands: ${commands[@]//_/-}"
+		exit_with_error "no such command: $cmd\navailable commands: ${commands[*]//_/-}"
 	fi
 }
 
@@ -113,33 +117,33 @@ tm_add_selective () {
 	btih=$(tm_torrent_hash "$torrent")
 
 	# check if torrent is already downloading
-	if tm_active $btih; then
+	if tm_active "$btih"; then
 		running=1
-		tm_stop $btih
+		tm_stop "$btih"
 	else
 		tm_add "$torrent"
 	fi
 
-	if tm_info $btih > /dev/null; then
-		count=$(tm_file_count $btih)
+	if tm_info "$btih" > /dev/null; then
+		count=$(tm_file_count "$btih")
 		# if the torrent only has 1 file it does not make sense to do a selective download...
-		if [ $count -gt 1 ]; then
+		if [[ $count -gt 1 ]]; then
 			if [[ $running -eq 0 ]]; then
 				# need to keep at least 1 file active, otherwise transmission removes the torrent
-				tm_cmd -t $btih -G 1-$(($count-1))
+				tm_cmd -t "$btih" -G 1-$((count-1))
 			fi
-			tm_cmd -t $btih -f|egrep "${files/,/|}"|cut -d ':' -f 1|while read id;do
+			while read -r id; do
 				[[ $id -eq 0 ]] && keep=1
-				tm_cmd -t $btih -g $id
-			done
-			[[ $keep -eq 0 && $running -eq 0 ]] && tm_cmd -t $btih -G 0
+				tm_cmd -t "$btih" -g "$id"
+			done < <(tm_cmd -t "$btih" -f|grep -E "${files/,/|}"|cut -d ':' -f 1)
+			[[ $keep -eq 0 && $running -eq 0 ]] && tm_cmd -t "$btih" -G 0
 		fi
 	else
 		echo "error adding torrent"
 		exit 1
 	fi
 	tm_cmd --no-start-paused
-	tm_start $btih
+	tm_start "$btih"
 }
 
 tm_remove () {
@@ -194,7 +198,7 @@ tm_torrent_hash () {
 # helper functions
 
 exit_with_error () {
-        echo -e "$(basename $0): $*" >&2
+        echo -e "$(basename "$0"): $*" >&2
 
         kill -s TERM $TOP_PID
 }
@@ -208,7 +212,7 @@ check_torrent () {
 create_symlinks () {
         basedir="$(dirname "$0")"
         sourcefile="$(readlink -e "$0")"
-	prefix=$(basename $sourcefile)
+	prefix=$(basename "$sourcefile")
         for cmd in "${commands[@]}"; do
 		name="${prefix}-${cmd//_/-}"
                 if [[ ! -e "$basedir/$name" ]]; then
@@ -221,8 +225,8 @@ create_symlinks () {
 
 help () {
         sourcefile="$(readlink -e "$0")"
-	prefix=$(basename $sourcefile)
-	echo $(basename $(readlink -f $0)) "version $version"
+	prefix=$(basename "$sourcefile")
+	echo "$(basename "$(readlink -f "$0")")" "version $version"
         cat <<- EOF
 
 	Use: $prefix COMMAND OPTIONS [parameters]
@@ -235,7 +239,7 @@ help () {
 
 	EOF
 
-	for cmd in ${programs[@]}; do
+	for cmd in "${programs[@]}"; do
 		echo -e "    $cmd\r\t\t\t${cmd/$prefix-}"
 	done
 
