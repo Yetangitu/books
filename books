@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
+#
+# shellcheck disable=SC2034,SC1090,SC2254
 
 shopt -s extglob
 trap "trap_error" TERM
 trap "trap_clean" EXIT
 export TOP_PID=$$
 
-version="0.7.0"
-release="20210506"
+version="0.7.1"
+release="20200812"
+
+functions="$(dirname "$0")/books_functions"
+if [ -f "$functions" ]; then
+        source "$functions"
+else
+        echo "$functions not found"
+        exit 1
+fi
 
 main () {
 	# PREFERENCES
@@ -103,6 +113,8 @@ main () {
 		[q]=openlibraryid
 		[b]=identifierwodash
 		[m]=md5
+		[D]=ddc
+		[L]=lcc
 	)
 
 	# base url for covers
@@ -167,9 +179,9 @@ main () {
 
 	# used to select table prefix in command line search, contains regex patterns
 	declare -A attribute_columns=(
-		[description]="descr|toc"
-		[hashes]="crc32|edonkey|aich|sha1|tth|torrent|btih|sha256"
 		[topics]="topic_descr|topic_id"
+		[hashes]="crc32|edonkey|aich|sha1|tth|torrent|btih|sha256"
+		[description]="^descr$|toc"
 	)
 
 	# query output filter for different purposes
@@ -189,15 +201,13 @@ main () {
 	)
 
 	# GETOPT config
-	# remove captital M from options (tr -d 'm ') to allow it to be used for fast path search
-	# remove capital I from options (tr -d 'i ') to allow it to be used for use_ipfs
-	search_options='@('$(echo "${!schema[@]}"|tr ' ' '|')'|'$(echo "${!schema[@]}"|tr -d 'm '|tr -d 'i '|tr ' ' '|'|tr '[:lower:]' '[:upper:]')')'
-	search_getopts="$(echo "${!schema[@]}"|tr ' ' ':'):$(echo "${!schema[@]}"|tr -d 'm '|tr -d 'i '|tr ' ' ':'|tr '[:lower:]' '[:upper:]'):"
+	search_options='@('$(echo "${!schema[@]}"|tr ' ' '|')')'
+	search_getopts="$(echo "${!schema[@]}"|tr ' ' ':'):"
 
 	# X11-related config
 	if xset q &>/dev/null; then
 		# used to size yad/zenity windows
-		min_screenres=$(xrandr|grep '*'|sort -n|head -1|awk '{print $1}')
+		min_screenres=$(xrandr|grep '\*'|sort -n|head -1|awk '{print $1}')
 		x_size=$(($(echo "$min_screenres"|cut -d 'x' -f 1) - 50))
 		y_size=$(($(echo "$min_screenres"|cut -d 'x' -f 2) - 30))
 	fi
@@ -220,8 +230,6 @@ main () {
 	query=""
 	no_update=0
 
-	mysql=$(find_tool "mysql")
-
 	# this contains the columns in the current database, used to filter out unsupported search fields
 	current_fields="$(get_current_fields)"
 
@@ -242,7 +250,7 @@ main () {
 
 	# PROCESS OPTIONS AND BUILD QUERY
 
-	while getopts ":${search_getopts}fF:hkx#:@wu:I:U:=:j:J:M:$" OPTION
+	while getopts ":${search_getopts}fF:hkxX#:@wu:I:U:=:j:J:M:$" OPTION
 	do
 		case $OPTION in
 			$search_options)
@@ -272,6 +280,9 @@ main () {
 			x)
 				no_update=1
 				;;
+			X)
+				((exact_match++))
+				;;
 			'#')
 				limit="${OPTARG}"
 				;;
@@ -288,7 +299,7 @@ main () {
 							exit_with_error "-u: torrent helper script ($torrent_tools) not found"
 						fi
 					else
-						exit_with_error '-u needs torrent helper script, see $torrent_tools'
+						exit_with_error "-u needs torrent helper script, see \$torrent_tools"
 					fi
 				else
 					unset use_torrent
@@ -296,7 +307,10 @@ main () {
 				;;
 
 			I)
-				if is_true "$OPTARG"; then
+				if [[ "$OPTARG" == "show" ]]; then
+					get_ipfs_cid
+					exit
+				elif is_true "$OPTARG"; then
 					use_ipfs=1
 					unset use_torrent
 				else
@@ -462,37 +476,13 @@ main () {
 
 }
 
-# find tool, returns the first|one|found, exit with error message if none found
-find_tool () {
-	IFS='|' read -ra tools <<< "$*"
-
-	found=0
-
-	for tool in ${tools[@]}; do
-		if [[ -n $(which "$tool") ]]; then
-			found=1
-			break
-		fi
-	done
-
-        if [[ $found -eq 0 ]]; then
-		if [[ ${#tools[@]} -gt 1 ]]; then
-			exit_with_error "missing programs: $*; install at least one of these: ${tools[*]} and try again"
-		else
-                	exit_with_error "missing program: $1; please install and try again"
-                fi
-        fi
-
-	echo "$tool"
-}
-
 # DOWNLOAD
 
 # feed this a list of hashes to attempt to download the related publications
 download () {
 	db="$1"
 	shift
-	for md5 in $@; do
+	for md5 in "$@"; do
 
 		filename=$(get_filename "$md5" "$use_deep_path")
 
@@ -504,7 +494,6 @@ download () {
 				dl_src_ipfs "$db" "$md5" "$filename"
 			else
 				dl_src_direct "$db" "$md5" "$filename"
-				# dl_src_${db} "$md5" "$filename"
 			fi
 		fi
 	done
@@ -566,20 +555,18 @@ get_file () {
 		;;
 	esac
 
-	trap "kill $(<"${tmpdir}/dl_pid") $(<"${tmpdir}/pager_pid") 2>/dev/null; rm -rf ${tmpdir};" EXIT
+	trap 'kill $(<"${tmpdir}"/dl_pid) $(<"${tmpdir}"/pager_pid) 2>/dev/null; rm -rf "${tmpdir}";' EXIT
 
 	# wait for the pager to finish (or be closed by the user) and/or the download to finish
 	# this replaces the (buggy) auto-kill functionality of yad and zenity (dialog does not have any auto-kill)
-	while (kill -0 $(<"${tmpdir}/pager_pid") 2>/dev/null); do
-		if (kill -0 $(<"${tmpdir}/dl_pid") 2>/dev/null); then
+
+	while (kill -0 "$(<"${tmpdir}/pager_pid")" 2>/dev/null); do
+		if (kill -0 "$(<"${tmpdir}/dl_pid")" 2>/dev/null); then
 			sleep 1
 		else
 			break
 		fi
 	done
-	kill $(<"${tmpdir}/dl_pid") 2>/dev/null
-	kill $(<"${tmpdir}/pager_pid") 2>/dev/null
-	rm -rf "${tmpdir}"
 }
 
 
@@ -592,11 +579,11 @@ dl_src_direct () {
 
 	case "$db" in
 		libgen)
-			url="${downloadurl[$db]}/$(get_torrent ${db} ${md5})/${md5,,}/placeholder"
+			url="${downloadurl[$db]}/$(get_torrent "${db}" "${md5}")/${md5,,}/placeholder"
 			;;
 		libgen_fiction)
 			extension=$(get_attr 'extension' "${db}" "${md5}")
-			url="${downloadurl[$db]}/$(get_torrent ${db} ${md5})/${md5,,}.${extension,,}/placeholder"
+			url="${downloadurl[$db]}/$(get_torrent "${db}" "${md5}")/${md5,,}.${extension,,}/placeholder"
 			;;
 		*)
 			exit_with_error "no direct download available for $db"
@@ -629,7 +616,7 @@ dl_src_ipfs () {
 
 	if [[ -z $ipfs_cid ]]; then
 		echo "ipfs_cid not found, trying direct download..."
-		dl_src_${db} "${md5}" "${filename}"
+		dl_src_direct "${db}" "${md5}" "${filename}"
 	else
 		url="${ipfs_gw}/ipfs/${ipfs_cid}"
 		get_file "'${filename}'" "${url}"
@@ -735,7 +722,7 @@ dl_src_torrent () {
 			until [[ $count == 5 ]]; do
 			    if copy_file; then break; fi
 			    sleep 5
-			    count=$((count+1))
+			    ((count++))
 			done
 			if [[ -f "$dest" ]]; then
 			    if ! check_md5 "$dest"; then
@@ -769,8 +756,8 @@ dl_src_torrent () {
 dl_torrent () {
 	db="$1"
 	md5="$2"
-	torrent_filename="$(get_torrent_filename ${db} ${md5})"
-	torrent_abspath="$(get_torrent_filename ${db} ${md5} 1)"
+	torrent_filename="$(get_torrent_filename "${db}" "${md5}")"
+	torrent_abspath="$(get_torrent_filename "${db}" "${md5}" 1)"
 
 	if [[ ! -f "$torrent_abspath" ]]; then
 		url="${torrenturl[$db]}/${torrent_filename}"
@@ -788,7 +775,7 @@ dl_torrent () {
 # currently only the main libgen db can be updated through the api
 update_database () {
 	db="${programs[books]}"
-        last_update=$(($(date +%s)-$(date -d "$(get_time_last_modified $db)" +%s)))
+        last_update=$(($(date +%s)-$(date -d "$(get_time_last_modified "$db")" +%s)))
 	if [[ $last_update -gt $((max_age*60)) ]]; then
 		if [[ $no_update -eq 0 ]]; then
 			update_libgen=$(find_tool "update_libgen")
@@ -799,28 +786,17 @@ update_database () {
 	fi
 }
 
-dbx () {
-	db="$1"
-	shift
-
-        if [ $# -gt 0 ]; then
-                "$mysql" -Bsss -h ${dbhost} -P ${dbport} -u ${dbuser} ${db} -e "$@"
-        else
-                "$mysql" -Bsss -h ${dbhost} -P ${dbport} -u ${dbuser} ${db}
-        fi
-}
-
 get_current_fields () {
 	db="${programs[$program]}"
 	declare -a db_tables="${tables[$db]}"
 
-	for table in ${db_tables[@]}; do
-		dbx $db "describe $table;"|awk '{print tolower($1)}'
+	for table in "${db_tables[@]}"; do
+		dbx "$db" "describe $table;"|awk '{print tolower($1)}'
 	done
 }
 
 get_time_last_modified () {
-        dbx $db 'select MAX(TimeLastModified) FROM updated;'
+        dbx "$db" 'select MAX(TimeLastModified) FROM updated;'
 }
 
 add_clause () {
@@ -845,17 +821,18 @@ add_clause () {
 			pattern=${pattern//%/\\%}
 			pattern=${pattern//_/\\_}
 			[[ ! $opt_pattern =~ $pattern ]] && opt_pattern+=" $pattern"
-			case "${option}" in
-			[[:lower:]])
+			if [ -z "$exact_match" ]; then
 				clauses+=" and ${schema[${option}]} like '%${pattern}%'"
-				;;
-			[[:upper:]])
-				clauses+=" and ${schema[${option,,}]}='${pattern}'"
-				;;
-			esac
+			elif [ "$exact_match" -eq 1 ]; then
+				clauses+=" and ${schema[${option}]} like '${pattern}%'"
+			elif [ "$exact_match" -eq 2 ]; then
+				clauses+=" and ${schema[${option}]} like '%${pattern}'"
+			else
+				clauses+=" and ${schema[${option}]}='${pattern}'"
+			fi
 		fi
 
-		[[ ! $opt_fields =~ ${schema[${option,,}]} ]] && opt_fields+="${schema[${option,,}]},"
+		[[ ! $opt_fields =~ ${schema[${option}]} ]] && opt_fields+="${schema[${option}]},"
 	else
 		echo "warning: option -$option ignored (database $db does not contain column ${schema[${option}]})"
 	fi
@@ -878,7 +855,7 @@ run_query () {
 		else
 			query_result+=("${line[@]}")
 		fi
-	done < <(echo "$sql"|"$mysql" -Bssss -h "$dbhost" -P "$dbport" -u "$dbuser" "$db"|(eval "${filters[$filter]}"))
+	done < <(dbx "$db" "$sql"|(eval "${filters[$filter]}"))
 }
 
 get_attr () { 
@@ -1028,9 +1005,8 @@ preview_zenity () {
 		run_query "$db" "preview_zenity" "${sql}"
 		if [[ ${#query_result[@]} -gt 0 ]]; then
 			filename=$(get_attr 'filename' "$db" "$md5")
-			info="<table><tr><td><b>Author</b>:</td><td colspan='5'>${query_result[0]}</td></tr><tr><td><b>Title</b>:</td><td colspan='5'>${query_result[1]}</td></tr><tr><td><b>Volume</b>:</td><td>${query_result[2]}</td><td><b>Series</b>:</td><td>${query_result[3]}</td><td><b>Edition</b>:</td><td>${query_result[4]}</td></tr><tr><td><b>Year</b>:</td><td>${query_result[5]}</td><td><b>Publisher</b>:</td><td>${query_result[6]}</td></tr><tr><td><b>Language</b>:</td><td>${query_result[7]}</td><td><b>Size</b>:</td><td>${query_result[8]}</td><td><b>Type</b>:</td><td>${query_result[9]}</td></tr><tr><td><b>OLID</b>:</td><td>${query_reslt[10]}</td><td><b>ISBN</b>:</td><td>${query_result[11]}</td><td><b>MD5</b>:</td><td>${md5^^}</td></tr></table><span style='font-size:x-small;'><pre>${filename}</pre></span><hr><table><tr><td style='width:25%;'><img style='width:95%;' src='${coverurl[$db]}/${query_result[13]}'></td><td style='vertical-align:top;'>$(strip_html ${query_result[12]})</td></tr></table>"
-			zenity_result=$(echo "$info"|zenity --width $x_size --height $y_size --text-info --html --ok-label "Download" --cancel-label "Skip" --filename=/dev/stdin 2>/dev/null)
-			if [[ $? -eq 0 ]]; then
+			info="<table><tr><td><b>Author</b>:</td><td colspan='5'>${query_result[0]}</td></tr><tr><td><b>Title</b>:</td><td colspan='5'>${query_result[1]}</td></tr><tr><td><b>Volume</b>:</td><td>${query_result[2]}</td><td><b>Series</b>:</td><td>${query_result[3]}</td><td><b>Edition</b>:</td><td>${query_result[4]}</td></tr><tr><td><b>Year</b>:</td><td>${query_result[5]}</td><td><b>Publisher</b>:</td><td>${query_result[6]}</td></tr><tr><td><b>Language</b>:</td><td>${query_result[7]}</td><td><b>Size</b>:</td><td>${query_result[8]}</td><td><b>Type</b>:</td><td>${query_result[9]}</td></tr><tr><td><b>OLID</b>:</td><td>${query_result[10]}</td><td><b>ISBN</b>:</td><td>${query_result[11]}</td><td><b>MD5</b>:</td><td>${md5^^}</td></tr></table><span style='font-size:x-small;'><pre>${filename}</pre></span><hr><table><tr><td style='width:25%;'><img style='width:95%;' src='${coverurl[$db]}/${query_result[13]}'></td><td style='vertical-align:top;'>$(strip_html "${query_result[12]}")</td></tr></table>"
+			if zenity_result=$(echo "$info"|zenity --width $x_size --height $y_size --text-info --html --ok-label "Download" --cancel-label "Skip" --filename=/dev/stdin 2>/dev/null); then
 				download "${db}" "${md5}"
 			fi
 		fi
@@ -1046,10 +1022,8 @@ preview_yad () {
                 run_query "$db" "preview_yad" "${sql}"
                 if [[ ${#query_result[@]} -gt 0 ]]; then
                         filename=$(get_attr 'filename' "$db" "$md5")
-                        info="<table><tr><td><b>Author</b>:</td><td colspan='5'>${query_result[0]}</td></tr><tr><td><b>Title</b>:</td><td colspan='5'>${query_result[1]}</td></tr><tr><td><b>Volume</b>:</td><td>${query_result[2]}</td><td><b>Series</b>:</td><td>${query_result[3]}</td><td><b>Edition</b>:</td><td>${query_result[4]}</td></tr><tr><td><b>Year</b>:</td><td>${query_result[5]}</td><td><b>Publisher</b>:</td><td>${query_result[6]}</td></tr><tr><td><b>Language</b>:</td><td>${query_result[7]}</td><td><b>Size</b>:</td><td>${query_result[8]}</td><td><b>Type</b>:</td><td>${query_result[9]}</td></tr><tr><td><b>OLID</b>:</td><td>${query_reslt[10]}</td><td><b>ISBN</b>:</td><td>${query_result[11]}</td><td><b>MD5</b>:</td><td>${md5^^}</td></tr></table><span style='font-size:x-small;'><pre>${filename}</pre></span><hr><table><tr><td style='width:25%;'><img style='width:95%;' src='${coverurl[$db]}/${query_result[13]}'></td><td style='vertical-align:top;'>$(strip_html ${query_result[12]})</td></tr></table>"
-                        yad_result=$(echo "$info"|yad --width $x_size --height $y_size --html --button='gtk-cancel:1' --button='Download!filesave!Download this publication:0' --filename=/dev/stdin 2>/dev/null)
-			yad_return=$?
-                        if [[ $yad_return -eq 0 ]]; then
+                        info="<table><tr><td><b>Author</b>:</td><td colspan='5'>${query_result[0]}</td></tr><tr><td><b>Title</b>:</td><td colspan='5'>${query_result[1]}</td></tr><tr><td><b>Volume</b>:</td><td>${query_result[2]}</td><td><b>Series</b>:</td><td>${query_result[3]}</td><td><b>Edition</b>:</td><td>${query_result[4]}</td></tr><tr><td><b>Year</b>:</td><td>${query_result[5]}</td><td><b>Publisher</b>:</td><td>${query_result[6]}</td></tr><tr><td><b>Language</b>:</td><td>${query_result[7]}</td><td><b>Size</b>:</td><td>${query_result[8]}</td><td><b>Type</b>:</td><td>${query_result[9]}</td></tr><tr><td><b>OLID</b>:</td><td>${query_result[10]}</td><td><b>ISBN</b>:</td><td>${query_result[11]}</td><td><b>MD5</b>:</td><td>${md5^^}</td></tr></table><span style='font-size:x-small;'><pre>${filename}</pre></span><hr><table><tr><td style='width:25%;'><img style='width:95%;' src='${coverurl[$db]}/${query_result[13]}'></td><td style='vertical-align:top;'>$(strip_html "${query_result[12]}")</td></tr></table>"
+                        if yad_result=$(echo "$info"|yad --width $x_size --height $y_size --html --button='gtk-cancel:1' --button='Download!filesave!Download this publication:0' --filename=/dev/stdin 2>/dev/null); then
 				download "${db}" "${md5}"
                         fi
                 fi
@@ -1083,9 +1057,11 @@ list_dialog () {
 		clear
 		if [[ -n $dialog_result ]]; then
 			if [[ $show_preview -gt 0 ]]; then
-				preview "$db" "$dialog_result"
+				# shellcheck disable=SC2086
+				preview "$db" $dialog_result
 			else
-				download "$db" "$dialog_result"
+				# shellcheck disable=SC2086
+				download "$db" $dialog_result
 			fi
 		fi
 	fi
@@ -1103,9 +1079,11 @@ list_whiptail () {
 		clear
 		if [[ -n $whiptail_result ]]; then
 			if [[ $show_preview -gt 0 ]]; then
-				preview "$db" "$whiptail_result"
+				# shellcheck disable=SC2086
+				preview "$db" $whiptail_result
 			else
-				download "$db" "$whiptail_result"
+				# shellcheck disable=SC2086
+				download "$db" $whiptail_result
 			fi
 		fi
 	fi
@@ -1115,12 +1093,15 @@ list_yad () {
 	show_preview="$1"
 	db="${programs[$program]}"
 	if [[ ${#query_result[@]} -gt 0 ]]; then
-		yad_result=$(yad --width $x_size --height $y_size --separator=" " --title "$program :: ${window_title}" --text "${list_heading}" --list --checklist --dclick-action='bash -c "libgen_preview '$db' %s" &' ${yad_columns[$db]} -- "${query_result[@]}" 2>/dev/null)
+		# shellcheck disable=SC2086
+		yad_result=$(yad --width $x_size --height $y_size --separator=" " --title "$program :: ${window_title}" --text "${list_heading}" --list --checklist --dclick-action='bash -c "libgen_preview '"$db"' %s" &' ${yad_columns[$db]} -- "${query_result[@]}" 2>/dev/null)
 		if [[ -n $yad_result ]]; then
 			if [[ $show_preview -gt 0 ]]; then
-				preview "$db" "$yad_result"
+				# shellcheck disable=SC2086
+				preview "$db" $yad_result
 			else
-				download "$db" "$yad_result"
+				# shellcheck disable=SC2086
+				download "$db" $yad_result
 			fi
 		fi
 	fi
@@ -1133,12 +1114,15 @@ list_zenity () {
 	show_preview="$1"
 	db="${programs[$program]}"
 	if [[ ${#query_result[@]} -gt 0 ]]; then
+		# shellcheck disable=SC2086
 		zenity_result=$(zenity --width $x_size --height $y_size --separator=" " --title "$program :: ${window_title}" --text "${list_heading}" --list --checklist ${zenity_columns[$db]} "${query_result[@]}" 2>/dev/null)
 		if [[ -n $zenity_result ]];then
 			if [[ $show_preview -gt 0 ]]; then
-				preview "$db" "$zenity_result"
+				# shellcheck disable=SC2086
+				preview "$db" $zenity_result
 			else
-				download "$db" "$zenity_result"
+				# shellcheck disable=SC2086
+				download "$db" $zenity_result
 			fi
 		fi
 	fi
@@ -1148,15 +1132,16 @@ list_zenity () {
 # SQL
 
 get_fields () {
+	# shellcheck disable=SC2086
 	db="${programs[$program]}"
 	[[ -z "$show_fields" ]] && show_fields="${pager_columns[$db]}"
 	IFS=',' read -ra fields <<< "$show_fields"
 	result=""
 
-        for field in ${fields[@]}; do
+        for field in "${fields[@]}"; do
 		[[ ! "${current_fields[*],,}" =~ ${field,,} ]] && exit_with_error "no such field: $field"
 		table="m"
-		for category in ${!attribute_columns[@]}; do
+		for category in "${!attribute_columns[@]}"; do
 			if [[ "${field,,}" =~ ${attribute_columns[$category],,} ]]; then
 				table="${category:0:1}"
 				break
@@ -1282,29 +1267,6 @@ prepare_sql () {
 
 # UTILITY FUNCTIONS
 
-url_available () {
-	url="$1"
-	dl_tool=$(find_tool "$dl_tools")
-
-	case "$dl_tool" in
-		curl)
-			curl --output /dev/null --silent --fail -r 0-0 "$url"
-			;;
-		wget)
-			wget -q --spider "$url"
-			;;
-		*)
-			exit_with_error "unknown download tool ${dl_tool}"
-			;;
-	esac
-}
-
-add_cron_job () {
-	job="$*"
-
-	(crontab -l ; echo "*/1 * * * * $job") 2>/dev/null | sort | uniq | crontab -
-}
-
 get_db_for_md5 () {
 	md5="$1"
 
@@ -1325,7 +1287,7 @@ get_torrent_filename () {
 	md5="$2"
 	absolute="$3"
 
-	echo -n "${absolute:+$target_directory/${torrent_directory:+$torrent_directory/}}${torrentprefix[$db]}_$(get_torrent ${db} ${md5}).torrent"
+	echo -n "${absolute:+$target_directory/${torrent_directory:+$torrent_directory/}}${torrentprefix[$db]}_$(get_torrent "${db}" "${md5}").torrent"
 }
 
 create_symlinks () {
@@ -1340,21 +1302,6 @@ create_symlinks () {
 	exit
 }
 
-# leave <br> and <pre> to enable some simple formatting tasks
-strip_html () {
-	#echo "$*"|sed -e 's/<br>/\n/g;s/<[^>]*>//g;s/\n/<br>/g'
-	echo "$*"
-}
-
-is_true () {
-	val="${1,,}"
-	if [[ "${val:0:1}" == "y" || "$val" -gt 0 ]]; then
-		true
-	else
-		false
-	fi
-}
-
 check_settings () {
 	# does target directory exist?
 	[[ ! -d "$target_directory" ]] && exit_with_error "target_directory $target_directory does not exist";
@@ -1363,7 +1310,7 @@ check_settings () {
 	# when defined, does torrent helper script exist?
 	if [[ -n "$use_torrent" ]]; then
 		if [[ -z "$torrent_tools" ]]; then
-			exit_with_error '-u needs torrent helper script, see $torrent_tools'
+			exit_with_error "-u needs torrent helper script, see \$torrent_tools"
 		elif ! find_tool "$torrent_tools" >/dev/null; then
 			exit_with_error "-u: torrent helper script ($torrent_tools) not found"
 		fi
@@ -1374,33 +1321,16 @@ check_settings () {
 	fi
 }
 
-# echo error message to stdout and terminate main
-exit_with_error () {
-	echo -e "$(basename $0): $*" >&2
-
-	kill -s TERM $TOP_PID
-}
-
-trap_error () {
-	if [[ $ui_tool == "whiptail" ]]; then
-		reset
-	fi
-
-	exit 1
-}
-
-trap_clean () {
-	if [[ $ui_tool == "whiptail" ]]; then
-		reset
-	fi
-
-	exit
+cleanup () {
+        if [[ $ui_tool == "whiptail" ]]; then
+                reset
+        fi
 }
 
 # HELP
 
 help () {
-	echo $(basename $(readlink -f $0)) "version $version"
+	echo "$(basename "$(readlink -f "$0")")" "version $version"
 	cat <<- 'EOF'
 
 	Use: books OPTIONS [like] [<PATTERN>]
@@ -1433,8 +1363,9 @@ help () {
 	SEARCH BY FIELD:
 
 	This is the default search mode. If no field options are given this searches
-	the Title field for the PATTERN. Capital options (-A, -T, etc) for exact match,
-	lower-case (-a, -t, etc) for pattern match.
+	the Title field for the PATTERN. Search uses partial matching by default, use
+	-X for matching words starting with PATTERN, -XX to match words which end with
+	PATTERN and -XXX for exact matching.
 
 	FULLTEXT SEARCH (-f):
 
@@ -1460,11 +1391,7 @@ help () {
 	EOF
 
 	for key in "${!schema[@]}"; do
-		if [ "$key" == "m" ]; then
-			echo "    -${key}		search on ${schema[$key]^^}"
-		else
-			echo "    -${key}, -${key^^}	search on ${schema[$key]^^}"
-		fi
+		echo "    -${key}		search on ${schema[$key]^^}"
 	done
 
 	cat <<- 'EOF'
@@ -1473,6 +1400,10 @@ help () {
 	 		searches for the given words in the fields indicated by the other options.
 	 		when no other options are given this will perform a pattern match search
 	 		for the given words over the Author and Title fields.
+
+	    -X		search for fields starting with PATTERN
+	    -XX		search for fields ending with PATTERN
+	    -XXX	search for fields exacly matching PATTERN
 
 	    -w		preview publication info before downloading (cover preview only in GUI tools)
 	 		select one or more publication to preview and press enter/click OK.
@@ -1538,13 +1469,13 @@ help () {
 	Do an exact search on the Title field for 'The Odyssey' and the Author field for 'Homer', showing
 	the result in the terminal
 
-	  $ books -T 'The Odyssey' -A 'Homer'
+	  $ books -X -t 'The Odyssey' -a 'Homer'
 
 
 	Do the same search as above, showing the results in a list on the terminal with checkboxes to select
 	one or more publications for download
 
-	  $ nbook -T 'The Odyssey' -A 'Homer'
+	  $ nbook -X -t 'The Odyssey' -a 'Homer'
 
 
 	A case-insensitive pattern search using an X11-based interface; use bittorrent (-u) when downloading files
@@ -1578,9 +1509,9 @@ help () {
 	  $ books -M 51b4ee7bc7eeb6ed7f164830d5d904ae -F author,title,extension
 
 
-	Download a publication using its MD5 (-J MD5), using bittorrent (-u) to download
+	Download a publication using its MD5 (-J MD5), using IPFS (-I y) to download
 	
-	  $ books -u y -J 51b4ee7bc7eeb6ed7f164830d5d904ae
+	  $ books -I y -J 51b4ee7bc7eeb6ed7f164830d5d904ae
 
 	EOF
 }
