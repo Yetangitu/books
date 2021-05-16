@@ -460,12 +460,12 @@ The `classify` helper script supports the following options:
 
 ```
 $ classify -h
-classify "version 0.3.0"
+classify "version 0.5.0"
 
-Use: classify [OPTIONS] identifier
+Use: classify [OPTIONS] identifier[,identifier...]
 
 Queries OCLC classification service for available data
-Supports: DDC, LCC, NLM, Author and Title
+Supports: DDC, LCC, NLM, FAST, Author and Title
 
 Valid identifiers are ISBN, ISSN, UPC and OCLC/OWI
 
@@ -474,24 +474,24 @@ OPTIONS:
  	-d	show DDC
  	-l	show LCC
  	-n	show NLM
+ 	-f	show FAST
  	-a	show Author
  	-t	show Title
 
- 	-F	create filename (DDC/Author-Title)
+ 	-o	show OWI (OCLC works identifier)
+ 	-w	show WI (OCLC works number)
 
- 	-Q md5	create SQL to update database
+ 	-C md5	create CSV (MD5,DDC,LCC,NLM,FAST,AUTHOR,TITLE)
  		use -D libgen/-D libgen_fiction to indicate database
- 		use with -V to add SQL comments with publication author
- 		and title
+
+ 	-X dir	save OCLC XML response to $dir/$md5.xml
+ 		only works with a defined MD5 (-C MD5)
 
  	-D db	define which database to use (libgen/libgen_fiction)
 
  	-A	show all available data for identifier
 
- 	-o	show OCLC work index (owi)
-
  	-V	show labels
- 	-S sep	change separator used to build filename (default: -)
 
  	-@	use torsocks to connect to the OCLC classify service.
  	use this to avoid getting your IP blocked by OCLC
@@ -506,19 +506,27 @@ TITLE: The republic
 DDC: 321.07
 LCC: JC71
 
-$ classify -Q 25b8ce971343e85dbdc3fa375804b538 0199535760
-update updated set DDC='321.07', LCC='JC71' where md5='25b8ce971343e85dbdc3fa375804b538';
+$ classify -D libgen -C 25b8ce971343e85dbdc3fa375804b538
+25b8ce971343e85dbdc3fa375804b538,"321.07","JC71","",UG9saXRpY2FsI\ 
+HNjaWVuY2UsVXRvcGlhcyxKdXN0aWNlLEV0aGljcyxQb2xpdGljYWwgZXRoaWNzLFB\ 
+oaWxvc29waHksRW5nbGlzaCBsYW5ndWFnZSxUaGVzYXVyaQo=,UGxhdG8gfCBKb3dl\ 
+dHQsIEJlbmphbWluLCAxODE3LTE4OTMgW1RyYW5zbGF0b3I7IEVkaXRvcjsgT3RoZX\ 
+JdIHwgV2F0ZXJmaWVsZCwgUm9iaW4sIDE5NTItIFtUcmFuc2xhdG9yOyBXcml0ZXIg\ 
+b2YgYWRkZWQgdGV4dDsgRWRpdG9yOyBPdGhlcl0gfCBMZWUsIEguIEQuIFAuIDE5MD\ 
+gtMTk5MyBbVHJhbnNsYXRvcjsgRWRpdG9yOyBBdXRob3Igb2YgaW50cm9kdWN0aW9u\ 
+XSB8IFNob3JleSwgUGF1bCwgMTg1Ny0xOTM0IFtUcmFuc2xhdG9yOyBBdXRob3I7IE\ 
+90aGVyXSB8IFJlZXZlLCBDLiBELiBDLiwgMTk0OC0gW1RyYW5zbGF0b3I7IEVkaXRv\ 
+cjsgT3RoZXJdCg==,VGhlIHJlcHVibGljCg==
 
 
 Classifying libgen/libgen_fiction
 
-This tool can be used to add DDC and LCC classification data
-to libgen and libgen_fiction databases. It does not directy
-modify the database, instead producing SQL code which can be
-used to apply the modifications. The best way to do this is
-to produce a list of md5 hashes for publications which do
-have Identifier values but lack values for DDC and/or LCC. Such
-lists can be produced by the following SQL:
+This tool can be used to add classification data to libgen and
+libgen_fiction databases. It does not directy modify the database,
+instead producing CSV which can be used to apply the modifications.
+The best way to do this is to produce a list of md5 hashes for
+publications which do have Identifier values but lack values for DDC
+and/or LCC. Such lists can be produced by the following SQL:
 
    libgen: select md5 from updated where IdentifierWODash<>"" and DDC="";
    libgen_fiction: select md5 from fiction where Identifier<>"" and DDC="";
@@ -532,6 +540,21 @@ is configured correctly for your Tor instance) to avoid having too
 many requests from your IP to be registered, this again to avoid
 your IP being blocked. The OCLC classification service is not
 run as a production service (I asked them).
+
+Return values are stored in the following order:
+
+   MD5,DDC,LCC,NLM,FAST,AUTHOR,TITLE
+
+DDC, LCC and NLM are enclosed within double quotes and can contain
+multiple space-separated values. FAST, AUTHOR and TITLE are base64 encoded
+since these fields can contain a whole host of unwholesome characters
+which can mess up CSV. The AUTHOR field currentlydecodes to a pipe ('|')
+separated list of authors in the format:
+
+   LAST_NAME, NAME_OR_INITIALS, DATE_OF_BIRTH-[DATE_OF_DEATH] [[ROLE[[;ROLE]...]]]
+
+This format could change depending on what OCLC does with the
+(experimental) service.
 ```
 
 ## Installation
