@@ -246,7 +246,7 @@ help () {
 	cat <<-EOHELP
 	$(basename "$(readlink -f "$0")") "version $version"
 
-	Use: classify [OPTIONS] identifier
+	Use: classify [OPTIONS] identifier[,identifier...]
 
 	Queries OCLC classification service for available data
 	Supports: DDC, LCC, NLM, Author and Title
