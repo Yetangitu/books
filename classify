@@ -249,7 +249,7 @@ help () {
 	Use: classify [OPTIONS] identifier[,identifier...]
 
 	Queries OCLC classification service for available data
-	Supports: DDC, LCC, NLM, Author and Title
+	Supports: DDC, LCC, NLM, FAST, Author and Title
 
 	Valid identifiers are ISBN, ISSN, UPC and OCLC/OWI
 
