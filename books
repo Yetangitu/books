@@ -496,6 +496,8 @@ download () {
 				dl_src_direct "$db" "$md5" "$filename"
 			fi
 		fi
+
+		log_info "downloaded: $filename"
 	done
 }
 

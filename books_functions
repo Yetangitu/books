@@ -88,6 +88,30 @@ trap_clean () {
         exit
 }
 
+_log () {
+	msg="$*"
+	logdir="${XDG_STATE_HOME:-$HOME/.state}/books"
+	logfile=$(basename "$0").log
+	mkdir -p "$logdir"
+	echo "$(date -Iseconds): $msg" >> "$logdir/$logfile"
+}
+
+log_err () {
+	_log "E: $*"
+}
+
+log_warn () {
+	_log "W: $*"
+}
+
+log_info () {
+	_log "I: $*"
+}
+
+log_debug () {
+	_log "D: $*"
+}
+
 # DATABASE
 dbx () {
         db="$1"
