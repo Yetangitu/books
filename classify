@@ -34,6 +34,7 @@ main () {
 		[lcc]='join(/classify/recommendations/lcc/mostPopular/@nsfa)'
 		[nlm]='join(/classify/recommendations/nlm/mostPopular/@sfa)'
 		[author]='/classify/work/@author'
+		[authors]='join(/classify/authors/author," | ")'
 		[title]='/classify/work/@title'
 	)
 
@@ -261,14 +262,14 @@ help () {
 	 	-a	show Author
 	 	-t	show Title
 
-		-o	show OWI (OCLC works identifier)
-		-w	show WI (OCLC works number)
+	 	-o	show OWI (OCLC works identifier)
+	 	-w	show WI (OCLC works number)
 
 	 	-C md5	create CSV (MD5,DDC,LCC,NLM,FAST,AUTHOR,TITLE)
 	 		use -D libgen/-D libgen_fiction to indicate database
 
 	 	-X dir	save OCLC XML response to \$dir/\$md5.xml
-			only works with a defined MD5 (-C MD5)
+	 		only works with a defined MD5 (-C MD5)
 	
 	 	-D db	define which database to use (libgen/libgen_fiction)
 
@@ -290,15 +291,15 @@ help () {
 	LCC: JC71
 
 	$ classify -D libgen -C 25b8ce971343e85dbdc3fa375804b538
-	25b8ce971343e85dbdc3fa375804b538,"321.07","JC71","",UG9saXRpY2FsI\
-	HNjaWVuY2UsVXRvcGlhcyxKdXN0aWNlLEV0aGljcyxQb2xpdGljYWwgZXRoaWNzLFB\
-	oaWxvc29waHksRW5nbGlzaCBsYW5ndWFnZSxUaGVzYXVyaQo=,UGxhdG8gfCBKb3dl\
-	dHQsIEJlbmphbWluLCAxODE3LTE4OTMgW1RyYW5zbGF0b3I7IEVkaXRvcjsgT3RoZX\
-	JdIHwgV2F0ZXJmaWVsZCwgUm9iaW4sIDE5NTItIFtUcmFuc2xhdG9yOyBXcml0ZXIg\
-	b2YgYWRkZWQgdGV4dDsgRWRpdG9yOyBPdGhlcl0gfCBMZWUsIEguIEQuIFAuIDE5MD\
-	gtMTk5MyBbVHJhbnNsYXRvcjsgRWRpdG9yOyBBdXRob3Igb2YgaW50cm9kdWN0aW9u\
-	XSB8IFNob3JleSwgUGF1bCwgMTg1Ny0xOTM0IFtUcmFuc2xhdG9yOyBBdXRob3I7IE\
-	90aGVyXSB8IFJlZXZlLCBDLiBELiBDLiwgMTk0OC0gW1RyYW5zbGF0b3I7IEVkaXRv\
+	25b8ce971343e85dbdc3fa375804b538,"321.07","JC71","",UG9saXRpY2FsI\ 
+	HNjaWVuY2UsVXRvcGlhcyxKdXN0aWNlLEV0aGljcyxQb2xpdGljYWwgZXRoaWNzLFB\ 
+	oaWxvc29waHksRW5nbGlzaCBsYW5ndWFnZSxUaGVzYXVyaQo=,UGxhdG8gfCBKb3dl\ 
+	dHQsIEJlbmphbWluLCAxODE3LTE4OTMgW1RyYW5zbGF0b3I7IEVkaXRvcjsgT3RoZX\ 
+	JdIHwgV2F0ZXJmaWVsZCwgUm9iaW4sIDE5NTItIFtUcmFuc2xhdG9yOyBXcml0ZXIg\ 
+	b2YgYWRkZWQgdGV4dDsgRWRpdG9yOyBPdGhlcl0gfCBMZWUsIEguIEQuIFAuIDE5MD\ 
+	gtMTk5MyBbVHJhbnNsYXRvcjsgRWRpdG9yOyBBdXRob3Igb2YgaW50cm9kdWN0aW9u\ 
+	XSB8IFNob3JleSwgUGF1bCwgMTg1Ny0xOTM0IFtUcmFuc2xhdG9yOyBBdXRob3I7IE\ 
+	90aGVyXSB8IFJlZXZlLCBDLiBELiBDLiwgMTk0OC0gW1RyYW5zbGF0b3I7IEVkaXRv\ 
 	cjsgT3RoZXJdCg==,VGhlIHJlcHVibGljCg==
 
 
@@ -331,10 +332,13 @@ help () {
 	DDC, LCC and NLM are enclosed within double quotes and can contain
 	multiple space-separated values. FAST, AUTHOR and TITLE are base64 encoded
 	since these fields can contain a whole host of unwholesome characters
-	which can mess up CSV. The AUTHOR field decodes to a pipe ('|') separated
-	list of authors in the format:
+	which can mess up CSV. The AUTHOR field currentlydecodes to a pipe ('|')
+	separated list of authors in the format:
 
 	   LAST_NAME, NAME_OR_INITIALS, DATE_OF_BIRTH-[DATE_OF_DEATH] [[ROLE[[;ROLE]...]]]
+
+	This format could change depending on what OCLC does with the
+	(experimental) service.
 
 	EOHELP
 }
