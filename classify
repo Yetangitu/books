@@ -28,9 +28,9 @@ main () {
 	declare -A API=(
 		[response]='/classify/response/@code'
 		[owi]='/classify/works/work[1]/@owi'
-		[ddc]='/classify/recommendations/ddc/mostPopular/@nsfa'
-		[lcc]='/classify/recommendations/lcc/mostPopular/@nsfa'
-		[nlm]='/classify/recommendations/nlm/mostPopular/@sfa'
+		[ddc]='join(/classify/recommendations/ddc/mostPopular/@nsfa)'
+		[lcc]='join(/classify/recommendations/lcc/mostPopular/@nsfa)'
+		[nlm]='join(/classify/recommendations/nlm/mostPopular/@sfa)'
 		[author]='/classify/work/@author'
 		[title]='/classify/work/@title'
 	)
@@ -57,7 +57,7 @@ main () {
 	# source config file if it exists
 	[[ -f ${config} ]] && source "${config}"
 
-	while getopts "odlnatS:FVAD:Q:@h" OPTION; do
+	while getopts "odlnatS:FVAD:Q:C:G@h" OPTION; do
 		case $OPTION in
 			o)
 				request="$request owi"
@@ -96,9 +96,19 @@ main () {
 				isbn=$(get_identifier "$db" "$md5")
 				[ -z "$isbn" ] && exit_with_error "no identifier found in $db for MD5 = $md5"
 				;;
+			C)
+				[ -z "$db" ] && exit_with_error "use -D to define which database to use"
+				build_cdf=1
+				md5="$OPTARG"
+				isbn=$(get_identifier "$db" "$md5")
+				[ -z "$isbn" ] && exit_with_error "no identifier found in $db for MD5 = $md5"
+				;;
 			A)
 				request="author title owi ddc lcc nlm"
 				verbose=1
+				;;
+			G)
+				((debug++))
 				;;
 			@)
 				torsocks=$(find_tool "torsocks")
@@ -132,25 +142,34 @@ main () {
 			get_xml "$xml" "owi=$owi"
 			;;
 		100)
+			[[ $build_sql ]] && echo "-- $md5: no input"
 			exit_with_error "no input"
 			;;
 		101)
+			[[ $build_sql ]] && echo "-- $md5: invalid input"
 			exit_with_error "invalid input"
-			
 			;;
 		102)
+			[[ $build_sql ]] && echo "-- $md5: not found"
 			exit_with_error "not found"
 			;;
 		200)
+			[[ $build_sql ]] && echo "-- $md5: unexpected error"
 			exit_with_error "unexpected error"
 			;;
 	esac
+
+	if [[ -n "$debug" ]]; then
+		cat "$xml"
+	fi
 
 	if [[ -n "$build_filename" ]]; then
 		build_filename "$xml"
 
 	elif [[ -n "$build_sql" ]]; then
 		build_sql "$db" "$md5" "$xml"
+	elif [[ -n "$build_cdf" ]]; then
+		build_cdf "$db" "$md5" "$xml"
 	else
 		show_data "$request"
 	fi
@@ -225,6 +244,24 @@ build_sql () {
 		echo "update ${tables[$db]} set $updates where md5='$md5';"
 	fi
 }
+
+build_cdf () {
+	db="$1"
+	md5="$2"
+	xml="$3"
+
+	updates="${md5}"
+
+	for parameter in ddc lcc nlm; do
+		data=$(get "$parameter" "$xml")
+		updates+=",${data}"
+	done
+
+	echo "$updates"
+}
+
+
+
 
 cleanup () {
 	base=$(basename "$xml")
