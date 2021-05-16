@@ -8,8 +8,8 @@ trap "trap_error" TERM
 trap "trap_clean" EXIT
 export TOP_PID=$$
 
-version="0.3.0"
-release="20210512"
+version="0.4.0"
+release="20210516"
 
 functions="$(dirname "$0")/books_functions"
 if [ -f "$functions" ]; then
