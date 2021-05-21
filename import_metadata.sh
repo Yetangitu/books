@@ -3,7 +3,7 @@
 #
 # import_metadata - import metadata to libgen/libgen_fiction
 #
-# input: a single line of / a file containg CSV-ordered metadata
+# input: a [single line of|file containg] CSV-ordered metadata
 
 shopt -s extglob  
 trap "trap_error" TERM
@@ -21,12 +21,12 @@ else
         exit 1
 fi
 
-
 main () {
 
 	exlock now || exit 1
-	#coproc filter_dcc { filter_ddc; }
-	#coproc filter_fast { filter_fast; }
+
+	coproc coproc_ddc { coproc_ddc; }
+	coproc coproc_fast { coproc_fast; } 
 
         # PREFERENCES
         config=${XDG_CONFIG_HOME:-$HOME/.config}/books.conf
@@ -40,7 +40,8 @@ main () {
 	update_sql="${tmpdir}/update_sql"
 
 	# input field filters
-	declare -A filters=(
+	declare -A filter=(
+		[md5]=filter_md5
 		[ddc]=filter_ddc
 		[lcc]=filter_ddc
 		[nlm]=filter_ddc
@@ -142,7 +143,7 @@ main () {
 		readarray -t csvdata <<< "$*"
 	fi
 
-	echo "start transaction;" > "${update_sql}"
+	printf "start transaction;\n" > "${update_sql}"
 
 	for line in "${csvdata[@]}"; do
 		readarray -d',' -t csv <<< "$line"
@@ -150,63 +151,79 @@ main () {
 		if [[ "$verbose" -ge 2 ]]; then
 			index=0
 			for key in $keys; do
-				echo "${key^^}: $(get_field "$key")"
+				echo "${key^^}: $(${filter[$key]} "$key")"
 				((index++))
 			done
 		fi
 
 		sql="$(build_sql)"
 
-		echo "$sql" >> "$update_sql"
+		printf "$sql\n" >> "$update_sql"
 
 		if [[ "$verbose" -ge 3 ]]; then
 			echo "$sql"
 		fi
 
-		[[ -n "$sqlfile" ]] && echo "$sql" >> "$sqlfile"
+		[[ -n "$sqlfile" ]] && printf "$sql\n" >> "$sqlfile"
 
 		unset key
 		unset sql
 		csv=()
 	done
 
-	echo "commit;" >> "$update_sql"
+	printf "commit;\n" >> "$update_sql"
 	[[ -z "$dry_run" ]] && dbx "$db" < "$update_sql"
 }
 
-filter_ddc () {
-	#stdbuf -i0 -oL tr -d \"|stdbuf -i0 -oL tr -s '[:blank:]' ','
-	echo "$*"|tr -d \"|tr -s '[:blank:]' ','
+filter_md5 () {
+	field="$1"
+	printf "${csv[${headers[$field]}]}"
 }
 
-filter_fast () {
-	#sed -u 's/\(["\\'\'']\)/\\\1/g;s/\r/\\r/g;s/\n/\\n/g;s/\t/\\t/g'
-	echo "$*"|stdbuf -i0 -oL base64 -d|sed -u 's/\(["\\'\'']\)/\\\1/g;s/\r/\\r/g;s/\n/\\n/g;s/\t/\\t/g'
+filter_ddc () {
+	field="$1"
+
+	# without coprocess
+        # echo "${csv[${headers[$field]}]}"|sed 's/"//g;s/[[:blank:]]\+/,/g'
+	
+	# with coprocess (30% faster)
+        printf "${csv[${headers[$field]}]}\n" >&${coproc_ddc[1]}
+	IFS= read -ru ${coproc_ddc[0]} value
+	printf "$value"
 }
+
+coproc_ddc () {
+        sed -u 's/"//g;s/[[:blank:]]\+/,/g'
+}
+
+
+filter_fast () {
+	field="$1"
+
+	# without coprocess
+        # echo "${csv[${headers[$field]}]}"|base64 -d|sed -u 's/\(["\\'\'']\)/\\\1/g;s/\r/\\r/g;s/\n/\\n/g;s/\t/\\t/g'
+
+	# with coprocess (30% faster)
+	# base64 can not be used as a coprocess due to its uncurable buffering addiction
+	value=$(printf "${csv[${headers[$field]}]}"|base64 -d)
+       	printf "$value\n" >&${coproc_fast[1]}
+	IFS= read -ru ${coproc_fast[0]} value
+	printf "$value"
+}
+
+coproc_fast () {
+        sed -u 's/\(["\\'\'']\)/\\\1/g;s/\r/\\r/g;s/\n/\\n/g;s/\t/\\t/g'
+}
+
 
 get_field () {
 	field="$1"
 	value="${csv[${headers[$field]}]}"
-
-	if [[ -n "${filters[$field]}" ]]; then
-		#echo "$value"|eval "${filters[$field]}"
-		${filters[$field]} "$value"
+	if [ -n "${filters[$field]}" ]; then
+		printf "$value"|eval "${filters[$field]}"
 	else
-		echo "$value"
+		printf "$value"
 	fi
-	#if [[ -z "${filters[$field]}" ]]; then
-	#	true
-	#elif [[ "${filters[$field]}" == "filter_dcc" ]]; then
-	#	echo "$value" >&${filter_dcc[1]}
-	#	IFS= read -ru ${filter_dcc[0]} value
-	#elif [[ "${filters[$field]}" == "filter_fast" ]]; then
-	#	val=$(echo "$value"|base64 -d)
-	#	# stdbuf -i0 -oL base64 -d - <<< "$value" >&${filter_fast[1]}
-	#	echo "$val" >&${filter_fast[1]}
-	#	IFS= read -ru ${filter_fast[0]} value
-	#fi
-
-	#echo "$value"
 }
 
 get_current_fields () {
@@ -219,7 +236,7 @@ get_current_fields () {
 build_sql () {
 	sql=""
 	for field in $fields; do
-		data=$(get_field $field)
+		data=$(${filter[$field]} "$field")
 		if [ -n "$data" ]; then
 			[[ -n "${redirect[$field]}" ]]  && field="${redirect[$field]}"
 			sql+="${sql:+,}${field^^}='${data}'"
@@ -227,13 +244,11 @@ build_sql () {
 	done
 
 	if [ -n "$sql" ]; then
-		echo "update ${tables[$db]} set $sql where MD5='$(get_field md5)';"
+		printf "update ${tables[$db]} set $sql where MD5='$(${filter['md5']} md5)';"
 	fi
 }
 
 cleanup () {
-	kill $filter_ddc_PID
-	kill $filter_fast_PID
         rm -rf "${tmpdir}"
 }
 
