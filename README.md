@@ -470,7 +470,7 @@ following fields:
  - [DDC](https://en.wikipedia.org/wiki/Dewey_Decimal_Classification)
  - [LCC](https://en.wikipedia.org/wiki/Library_of_Congress_Classification)
  - [NLM](https://en.wikipedia.org/wiki/National_Library_of_Medicine_classification)
- - [FAST](https://www.oclc.org/research/areas/data-science/fast.html)FAST (Faceted Application of Subject Terminology, basically a list of subject keywords derived from the Library of Congress Subject Headings (LCSH))
+ - [FAST](https://www.oclc.org/research/areas/data-science/fast.html) (Faceted Application of Subject Terminology, basically a list of subject keywords derived from the Library of Congress Subject Headings (LCSH))
 
 The *classify* tool stores these fields in CSV files which can be fed to the
 *import_metadata* tool (see below)to update the database and/or produce SQL
