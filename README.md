@@ -587,7 +587,7 @@ used to produce SQL (using the -s sqlfile option) which can be used to update
 multiple database instances.
 
 In contrast to the other *books* tools *import_metadata* is a Python (version
-3) script using the *pymysql* "pure python" driver (*python3-pymysq* on Debian)
+3) script using the *pymysql* "pure python" driver (*python3-pymysql* on Debian)
 and as such should run on any device where Python is available. The
 distribution file contains a Bash script (*import_metadata.sh*) with the same
 interface and options which can be used where Python is not available.
