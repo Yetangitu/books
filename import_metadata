@@ -1,0 +1,298 @@
+#!/usr/bin/env python3
+#
+# import_metadata - import metadata to libgen/libgen_fiction
+
+import base64
+import csv
+import getopt
+import os
+import pymysql
+import re
+import sys
+
+
+version="0.1.0"
+release="20210521"
+
+def exit_with_error(msg):
+    sys.exit(os.path.basename(sys.argv[0])+" "+msg)
+
+def try_file(f,p):
+    try:
+        fp=open(f,p)
+        fp.close()
+        return True
+    except IOError as x:
+        exit_with_error(str(x))
+
+def main():
+
+    config = {
+            'dbhost': 'base.unternet.org',
+            'dbport': '3306',
+            'db': '',
+            'dbuser': 'libgen'
+            }
+
+    verbose = 0
+    dry_run = False
+    sqlfile = None
+    csvfile = None
+    use_fields=[]
+    sql=[]
+
+    re_csv=re.compile('(\s+)')
+
+    # read books config file (a bash source file) and interpret it
+    # works only for single-line static declarations (no shell code)
+    def read_conf(conf):
+        if 'APPDATA' in os.environ:
+            confdir = os.environ['APPDATA']
+        elif 'XDG_CONFIG_HOME' in os.environ:
+            confdir = os.environ['XDG_CONFIG_HOME']
+        else:
+            confdir = os.path.join(os.environ['HOME'], '.config')
+
+        conffile = os.path.join(confdir, 'books.conf')
+
+        if try_file(conffile,'r'):
+            line_re = re.compile('(?:export )?(?P<name>\w+)(?:\s*\=\s*)(?P<value>.+)')
+            value_re = re.compile('(?P<value>^[^#]+)(?P<comment>#.*)?$')
+            for line in open(conffile):
+                m = line_re.match(line)
+                if m:
+                    name = m.group('name')
+                    value = ''
+                    if m.group('value'):
+                        value = m.group('value')
+                        m = value_re.match(value)
+                        if m:
+                            value=m.group('value')
+
+                    conf[name]=value.strip('\"').strip("\'")
+
+        return conf
+
+    config=read_conf(config)
+
+    def to_itself(field):
+        return field
+
+    def to_csv(field):
+        return re_csv.sub(',', field)
+
+    def to_sqlescape(field):
+        return pymysql.escape_string(base64.b64decode(field).decode().rstrip())
+
+    fields=['md5','ddc','lcc','nlm','fast','author','title']
+
+    filters = {
+            'md5': to_itself,
+            'ddc': to_csv,
+            'lcc': to_csv,
+            'nlm': to_csv,
+            'fast': to_sqlescape,
+            'author': to_sqlescape,
+            'title': to_sqlescape
+            }
+
+    redirects = {
+            'fast': 'tags'
+            }
+
+    tables = {
+            'libgen': 'updated',
+            'libgen_fiction': 'fiction'
+            }
+
+
+    def redirect(field):
+        if field in redirects:
+            return redirects[field]
+        else:
+            return field
+
+    def usage():
+        msg=[]
+        def fmt_dict(lst):
+            for key in lst:
+                msg.append(str(key+" -> "+lst[key]).upper())
+            return msg
+
+        print(helpmsg.format(
+            progname=os.path.basename(sys.argv[0]),
+            version="v."+version,
+            csvfields=','.join(fields).upper(),
+            redirects=fmt_dict(redirects)
+            ))
+        sys.exit()
+
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "d:f:F:H:u:U:ns:vh")
+    except getopt.GetoptError as err:
+        print(str(err))
+        usage()
+
+    for o, a in opts:
+        if o == "-v":
+            verbose+=1
+        elif o in ("-h"):
+            usage()
+        elif o in ("-d"):
+            config['db'] = a
+        elif o in ("-f"):
+            for f in a.split(','):
+                if f in fields:
+                    use_fields.append(f)
+                else:
+                    exit_with_error("-f "+f+" : no such field")
+        elif o in ("-F"):
+            if try_file(a,'r'):
+                csvfile = a
+        elif o in ("-H"):
+            config['dbhost'] = a
+        elif o in ("-U"):
+            config['dbuser'] = a
+        elif o in ("-n"):
+            dry_run = True
+        elif o in ("-s"):
+            if try_file(a,'w'):
+                sqlfile = a
+        else:
+            exit_with_error("unhandled option")
+        
+    if len(sys.argv) <= 2:
+        exit_with_error("needs at least 3 parameters: -d database -f field1,field2 -F csvfile")
+
+    if not config['db'] or config['db'] not in tables:
+        exit_with_error("-d "+config['db']+": no such database")
+
+    if not use_fields:
+        exit_with_error("no fields defined, use -f field1 -f field2")
+
+    with open(csvfile) as cf:
+        reader = csv.DictReader(cf, fieldnames=fields)
+
+        if verbose >= 1:
+            sys.stdout.writelines(['\n#----DATA----------------------\n\n'])
+
+        for row in reader:
+            if verbose >= 1:
+                for field in fields:
+                    print(field.upper()+": "+filters[field](row[field]))
+                print("")
+
+            updates=""
+            comma=""
+            for field in use_fields:
+                value=filters[field](row[field])
+                if value:
+                    if updates:
+                        comma=","
+                    updates+=comma+redirect(field).upper()+"='"+value+"'"
+
+            if updates:
+                sql.append("update updated set "+updates+" where md5='"+row['md5']+"';\n")
+            else:
+                if verbose:
+                    print("-- fields "+str(use_fields)+" not defined for md5:"+row['md5'])
+
+    if sql:
+        if sqlfile:
+            fp=open(sqlfile,'a')
+            fp.writelines([
+                '-- csvfile: '+csvfile+'\n',
+                '-- database: '+config['db']+'\n',
+                '-- fields: '+str(use_fields)+'\n',
+                '-- command: '+' '.join(sys.argv)+'\n',
+                'start transaction;\n'
+                ])
+            fp.writelines(sql)
+            fp.writelines(['commit;\n'])
+            fp.close()
+
+        if verbose >= 2:
+            sys.stdout.writelines(['\n#----SQL-----------------------\n\n'])
+            sys.stdout.writelines(sql)
+
+        if not dry_run:
+            print("DATABASE: "+config['db'])
+            conn=pymysql.connect(
+                    read_default_file='~/.my.cnf',
+                    host=config['dbhost'],
+                    port=config['dbport'],
+                    user=config['dbuser'],
+                    database=config['db']
+                    )
+
+            with conn:
+                with conn.cursor() as cursor:
+                    for line in sql:
+                        cursor.execute(line)
+
+                    conn.commit()
+
+helpmsg = """
+{progname} {version}
+
+Use: {progname} [OPTIONS] -d database -f "field1,field2" -F CSVDATAFILE
+
+Taking a file containing lines of CSV-formatted data, this tool can be
+used to update a libgen / libgen_fiction database with fresh metadata.
+It can also be used to produce SQL (using the -s sqlfile option) which
+can be used to update multiple database instances.
+
+CSV data format:
+
+   {csvfields}
+
+Fields FAST, AUTHOR and TITLE should be base64-encoded.
+
+CSV field names are subject to redirection to database field names,
+currently these redirections are active (CSV -> DB):
+
+   {redirects}
+
+OPTIONS:
+
+    -d DB   define which database to use (libgen/libgen_fiction)
+
+    -f field1,field2
+    -f field1 -f field2
+            define which fields to update
+
+    -F CSVFILE
+            define CSV input file
+
+    -s SQLFILE
+            write SQL to SQLFILE
+
+    -n      do not update database
+            use with -s SQLFILE to produce SQL for later use
+            use with -v to see data from CSVFILE
+            use with -vv to see SQL
+
+    -v      verbosity
+            repeat to increase verbosity
+
+    -h      this help message
+
+Examples
+
+$ import_metadata -d libgen -F csv/update-0000 -f 'ddc lcc fast'
+
+update database 'libgen' using data from CSV file csv/update-0000,
+fields DDC, LCC and FAST (which is redirected to libgen.Tags)
+
+$ for f in csv/update-*;do
+      {progname} -d libgen -s "$f.sql" -n -f 'ddc,lcc,fast' -F "$f"
+  done
+
+create SQL (-s "$f.sql") to update database using fields
+DDC, LCC and FAST from all files matching glob csv/update-*,
+do not update database (-n option)
+"""
+
+if __name__ == "__main__":
+    main()
+

@@ -456,7 +456,30 @@ values set in the configuration file override those in the script
 
 
 ## Classify
-The `classify` helper script supports the following options:
+Classify is a tool which, when fed an *identifier* (ISBN or ISSN, it also works
+with UPC and OCLC OWI/WI but these are not in the database) [i]or[/i] a
+database name and MD5 can be used to extract classification data from the OCLC
+classifier. Depending on what OCLC returns it can be used to add or update the
+following fields:
+
+### Always present:
+ - Author
+ - Title
+
+### One or more of:
+ - [DDC](https://en.wikipedia.org/wiki/Dewey_Decimal_Classification)
+ - [LCC](https://en.wikipedia.org/wiki/Library_of_Congress_Classification)
+ - [NLM](https://en.wikipedia.org/wiki/National_Library_of_Medicine_classification)
+ - [FAST](https://www.oclc.org/research/areas/data-science/fast.html)FAST (Faceted Application of Subject Terminology, basically a list of subject keywords derived from the Library of Congress Subject Headings (LCSH))
+
+The *classify* tool stores these fields in CSV files which can be fed to the
+*import_metadata* tool (see below)to update the database and/or produce SQL
+code. It can also store all XML data as returned by the OCLC classifier for
+later use, this offloads the OCLC classifier service which is marked as
+'experimental' and 'not built for production use' and as such can change or
+disappear at any moment.
+
+The *classify* helper script supports the following options:
 
 ```
 $ classify -h
@@ -556,6 +579,84 @@ separated list of authors in the format:
 This format could change depending on what OCLC does with the
 (experimental) service.
 ```
+
+## import_metadata
+Taking a file containing lines of CSV-formatted data, this tool can be used to
+update a libgen / libgen_fiction database with fresh metadata.  It can also be
+used to produce SQL (using the -s sqlfile option) which can be used to update
+multiple database instances.
+
+In contrast to the other *books* tools *import_metadata* is a Python (version
+3) script using the *pymysql* "pure python" driver (*python3-pymysq* on Debian)
+and as such should run on any device where Python is available. The
+distribution file contains a Bash script (*import_metadata.sh*) with the same
+interface and options which can be used where Python is not available.
+
+
+```
+$ import_metadata -h
+
+import_metadata v.0.1.0
+
+Use: import_metadata [OPTIONS] -d database -f "field1,field2" -F CSVDATAFILE
+
+Taking a file containing lines of CSV-formatted data, this tool can be
+used to update a libgen / libgen_fiction database with fresh metadata.
+It can also be used to produce SQL (using the -s sqlfile option) which
+can be used to update multiple database instances.
+
+CSV data format:
+
+   MD5,DDC,LCC,NLM,FAST,AUTHOR,TITLE
+
+Fields FAST, AUTHOR and TITLE should be base64-encoded.
+
+CSV field names are subject to redirection to database field names,
+currently these redirections are active (CSV -> DB):
+
+   ['FAST -> TAGS']
+
+OPTIONS:
+
+    -d DB   define which database to use (libgen/libgen_fiction)
+
+    -f field1,field2
+    -f field1 -f field2
+            define which fields to update
+
+    -F CSVFILE
+            define CSV input file
+
+    -s SQLFILE
+            write SQL to SQLFILE
+
+    -n      do not update database
+            use with -s SQLFILE to produce SQL for later use
+            use with -v to see data from CSVFILE
+            use with -vv to see SQL
+
+    -v      verbosity
+            repeat to increase verbosity
+
+    -h      this help message
+
+Examples
+
+$ import_metadata -d libgen -F csv/update-0000 -f 'ddc lcc fast'
+
+update database 'libgen' using data from CSV file csv/update-0000,
+fields DDC, LCC and FAST (which is redirected to libgen.Tags)
+
+$ for f in csv/update-*;do
+      import_metadata -d libgen -s "$f.sql" -n -f 'ddc,lcc,fast' -F "$f"
+  done
+
+create SQL (-s "$f.sql") to update database using fields
+DDC, LCC and FAST from all files matching glob csv/update-*,
+do not update database (-n option)
+```
+
+
 
 ## Installation
 Download this repository (or a tarball) and copy the four scripts - `books`, `update_libgen`, `refresh_libgen` and `tm` (only needed when using the transmission-daemon torrent client) - into a directory which is somewhere on your $PATH ($HOME/bin would be a good spot). Run `books -k`to create symlinks to the various names under which the program can be run:
