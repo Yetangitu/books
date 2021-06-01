@@ -7,8 +7,8 @@ trap "trap_error" TERM
 trap "trap_clean" EXIT
 export TOP_PID=$$
 
-version="0.7.1"
-release="20200812"
+version="0.7.2"
+release="20210601"
 
 functions="$(dirname "$0")/books_functions"
 if [ -f "$functions" ]; then
@@ -336,6 +336,7 @@ main () {
 				;;
 			@)
 				source "$(which torsocks)" on
+				export TORSOCKS_TOR_PORT=$OPTARG
 				;;
 			=)
 				if [ -d "${OPTARG}" ]; then
@@ -1448,7 +1449,7 @@ help () {
 	    -x		skip database update
 	 		(currently only the 'libgen' database can be updated)
 
-	    -@		use torsocks to connect to the libgen server(s). You'll need to install
+	    -@ TORPORT	use torsocks to connect to the libgen server(s). You'll need to install
 	    		torsocks before using this option; try this in case your ISP
 	    		(or a transit provider somewhere en-route) blocks access to libgen
 

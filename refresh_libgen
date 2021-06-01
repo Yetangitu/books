@@ -4,7 +4,7 @@
 # refresh libgen databases from dump files
 
 version="0.6.2"
-release="20210512"
+release="20210601"
 
 trap "trap_error" TERM
 trap "trap_clean" EXIT
@@ -156,6 +156,7 @@ main () {
 			;;
 		@)
 			torsocks=$(find_tool "torsocks")
+			export TORSOCKS_TOR_PORT=$OPTARG
 			;;
 		k)
 			keep_downloaded_files=1
@@ -305,7 +306,7 @@ help () {
 	    -c 		create a config file using current settings (see -H, -P, -U, -R)
 	    -e		edit config file
 
-	    -@		use tor (through torsocks) to connect to libgen server
+	    -@ TORPORT	use tor (through torsocks) to connect to libgen server
 	    -k		keep downloaded files after exit
 	    -h		this help message
 

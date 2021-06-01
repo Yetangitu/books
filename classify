@@ -8,8 +8,8 @@ trap "trap_error" TERM
 trap "trap_clean" EXIT
 export TOP_PID=$$
 
-version="0.5.0"
-release="20210516"
+version="0.5.1"
+release="20210601"
 
 functions="$(dirname "$0")/books_functions"
 if [ -f "$functions" ]; then
@@ -59,7 +59,7 @@ main () {
 	# source config file if it exists
 	[[ -f ${config} ]] && source "${config}"
 
-	while getopts "owdlnfatVAD:C:X:G@h" OPTION; do
+	while getopts "owdlnfatVAD:C:X:G@:h" OPTION; do
 		case $OPTION in
 			o)
 				request="$request owi"
@@ -111,6 +111,7 @@ main () {
 				;;
 			@)
 				torsocks=$(find_tool "torsocks")
+				export TORSOCKS_TOR_PORT=${OPTARG}
 				;;
 			h)
 				help
@@ -132,7 +133,7 @@ main () {
 
 		[[ -n "$debug" ]] && echo "trying $ident..."
 
-		get_xml "$xml" "stdnbr=$ident"
+		get_xml "$xml" "stdnbr=${ident// }"
 		response=$(get "response" "$xml")
 
 		case "$response" in
@@ -249,7 +250,7 @@ help () {
 	Use: classify [OPTIONS] identifier[,identifier...]
 
 	Queries OCLC classification service for available data
-	Supports: DDC, LCC, NLM, FAST, Author and Title
+	Supports: DDC, LCC, NLM, Author and Title
 
 	Valid identifiers are ISBN, ISSN, UPC and OCLC/OWI
 
@@ -277,7 +278,7 @@ help () {
 
 	 	-V	show labels
 
-	 	-@	use torsocks to connect to the OCLC classify service.
+	 	-@ PORT	use torsocks to connect to the OCLC classify service.
 		 	use this to avoid getting your IP blocked by OCLC
 
 	 	-h	show this help message
@@ -319,7 +320,7 @@ help () {
 	the resulting file in ~1000 line sections and feed these to this tool,
 	preferably with a random pause between requests to keep OCLC's intrusion
 	detection systems from triggering too early. It is advisable to use
-	this tool through Tor (using -@ to enable torsocks, make sure it
+	this tool through Tor (using -@ TORPORT to enable torsocks, make sure it
 	is configured correctly for your Tor instance) to avoid having too
 	many requests from your IP to be registered, this again to avoid
 	your IP being blocked. The OCLC classification service is not

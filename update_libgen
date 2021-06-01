@@ -66,7 +66,7 @@ main () {
 	declare -A values=()
 	declare -A upsert=()
 
-	while getopts "a:D:j:hH:i:l:nP:U:qs:t:u:v@" OPTION
+	while getopts "a:D:j:hH:i:l:nP:U:qs:ct:u:v@:" OPTION
 	do
 		case $OPTION in
 			j)
@@ -74,6 +74,11 @@ main () {
 				;;
 			s)
 				sql_dump="${OPTARG}"
+				;;
+			c)
+				classify=$(find_tool "classify")
+				import_metadata=$(find_tool "import_metadata")
+				classifile="${tmpdir}/classifile"
 				;;
 			v)
 				((verbose++))
@@ -116,7 +121,8 @@ main () {
 				fi
 				;;
 			@)
-				torsocks=$(find_toolo "torsocks")
+				torsocks=$(find_tool "torsocks")
+				export TORSOCKS_TOR_PORT=${OPTARG}
 				;;
 			q)
 				quiet=1
@@ -197,6 +203,10 @@ main () {
 				echo
 			fi
 
+			if [[ -n "$classifile" && -n "${record['identifierwodash']}" ]]; then
+				echo "${record['md5']}" >> "$classifile"
+			fi
+
 			keys=${!record[*]}
 
 			md5="${record[md5]}"
@@ -230,6 +240,7 @@ main () {
 					sql+="insert into $table (${columns[$table]%?}) values(${values[$table]%?}) on duplicate key update ${upsert[$table]%?};"
 				fi
 			done
+
 			echo "${sql}" >> "${update_sql}"
 			[[ -n $sql_dump ]] && echo "${sql}" >> "${sql_dump}"
 
@@ -249,6 +260,28 @@ main () {
 
 		[[ $no_action == 0 ]] && dbx "$db" < "${update_sql}"
 	done
+
+	# optionally add classification data to new records
+	# this will use tor and round-robin through TOR ports if these are
+	# defined in classify_tor_ports in the config file
+	if [[ -n "$classifile" && -f $classifile ]]; then
+		now=$(date +%Y%m%d%H%M)
+		csvfile="${classify_csv:+$classify_csv/}${now}.csv"
+		IFS=',' read -ra torports <<< "$classify_tor_ports"
+		if [[ ${#torports[*]} -gt 0 ]]; then
+			torpc=${#torports[*]}
+		fi
+		upc=0
+		while read md5;do
+			$classify ${torpc:+-@ ${torports[$upc%$torpc]}} -D "$db" ${classify_xml:+-X $classify_xml} -C "$md5" >> "${csvfile}"
+			((upc++))
+		done < <(cat "$classifile")
+
+		if [[ -f ${csvfile} ]]; then
+			$import_metadata -d "$db" -f "${classify_fields:-ddc,lcc,fast}" ${classify_sql:+-s $classify_sql/$now.sql} -F "${csvfile}"
+		fi
+	fi
+
 } 
 
 get_current_fields () {
@@ -417,7 +450,7 @@ help () {
 	    -D DATABASE	database name
 
 	    -a APIHOST	use APIHOST as API server
-	    -@		use tor (through torsocks) to connect to libgen API server
+	    -@ TORPORT	use tor (through torsocks) to connect to libgen API server
 	    -q		don't warn about missing fields in database or api response
 	    -h		this help message
 
