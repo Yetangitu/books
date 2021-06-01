@@ -124,7 +124,7 @@ OPTIONS
     -x		skip database update
  		(currently only the 'libgen' database can be updated)
 
-    -@		use torsocks to connect to the libgen server(s). You'll need to install
+    -@ TORPORT	use torsocks to connect to the libgen server(s). You'll need to install
     		torsocks before using this option; try this in case your ISP
     		(or a transit provider somewhere en-route) blocks access to libgen
 
@@ -219,7 +219,8 @@ Usage: update_libgen OPTIONS
     -D DATABASE	database name
 
     -a APIHOST	use APIHOST as API server
-    -@		use tor (through torsocks) to connect to libgen API server
+    -@ TORPORT	use tor (through torsocks) to connect to libgen API server
+    -c		run classify over new records to get classification data
     -q		don't warn about missing fields in database or api response
     -h		this help message
 ```
@@ -246,7 +247,7 @@ Performs a refresh from a database dump file for the chosen libgen databases.
     -c 		create a config file using current settings (see -H, -P, -U, -R)
     -e		edit config file
 
-    -@		use tor (through torsocks) to connect to libgen server
+    -@ TORPORT	use tor (through torsocks) to connect to libgen server
     -k		keep downloaded files after exit
     -h		this help message
 ```
@@ -516,7 +517,7 @@ OPTIONS:
 
  	-V	show labels
 
- 	-@	use torsocks to connect to the OCLC classify service.
+ 	-@ PORT	use torsocks to connect to the OCLC classify service.
  	use this to avoid getting your IP blocked by OCLC
 
  	-h	show this help message
@@ -558,7 +559,7 @@ Run these as batch jobs (mysql -B .... -e 'sql_code_here;' > md5_list), split
 the resulting file in ~1000 line sections and feed these to this tool,
 preferably with a random pause between requests to keep OCLC's intrusion
 detection systems from triggering too early. It is advisable to use
-this tool through Tor (using -@ to enable torsocks, make sure it
+this tool through Tor (using -@ TORPORT to enable torsocks, make sure it
 is configured correctly for your Tor instance) to avoid having too
 many requests from your IP to be registered, this again to avoid
 your IP being blocked. The OCLC classification service is not
@@ -766,6 +767,55 @@ Install symlinks to all tools by calling books with the -k option:
 ```
  $ books -k
 ```
+
+## configuration file
+The configuration file is *source*d by all shell scripts, it is parsed and interpreted by import_metadata. There are some of the more useful parameters which can be set in this file:
+
+```
+dbhost="base.example.org"
+dbport="3306"
+dbuser="libgen"
+```
+Use these to set the database server hostname, port and username.
+```
+torrent_download_directory="/net/incoming"
+torrent_cron_job=1
+torrent_tools="tm"
+```
+Set torrent download directory (where the torrent client places downloaded files), whether a cron job should be created to copy downloaded publications to their final name and location, which torrent helper tool to use
+```
+use_deep_path=1
+```
+Add section, language, author and subject to path name (e.g. nonfication/German/Physics/Einstein, Albert./Die Evolution der Physik)
+```
+use_ipfs=1
+```
+Try to use IPFS when downloading, reverts to direct download for files which do not have a defined ipfs_cid
+```
+gui_tools="yad|zenity"
+tui_tools="dialog|whiptail"
+parser_tools="xidel|hxwls"
+dl_tools="wget|curl"
+pager_tools="less|more|cat"
+```
+Tools to be used, in|order|of|preference - the first available is used
+```
+api=http://libgen.rs/json.php
+base=http://libgen.rs/dbdumps/
+ipfs_gw=https://cloudflare-ipfs.com
+#ipfs_gw=http://your_own_ipfs_node.example.org:8080
+```
+Defines which resources to use for API, dumps, IPFS etc
+```
+classify_xml="/home/username/Project/libgen_classify/xml"
+classify_csv="/home/username/Project/libgen_classify/csv"
+classify_sql="/home/username/Project/libgen_classify/sql"
+classify_fields="ddc,lcc,nlm,fast,title,author"
+classify_tor_ports="9100,9102,9104,9106,9108"
+```
+Used by update_libgen to configure *classify* and *import_metadata*, defines whether files are saved and where they are saved, which fields to update in the database and whether Tor is used and if so on which port(s). It is advisable to use more than one port to spread the traffic over several exit nodes, this reduces the risk of OCLC blocking the Tor exit node.
+
+There are far more configurable parameters, check the script source for more possibilities.
 
 ## *update_libgen* vs. *refresh_libgen*
 

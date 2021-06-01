@@ -451,6 +451,7 @@ help () {
 
 	    -a APIHOST	use APIHOST as API server
 	    -@ TORPORT	use tor (through torsocks) to connect to libgen API server
+	    -c		run classify over new records to get classification data
 	    -q		don't warn about missing fields in database or api response
 	    -h		this help message
 
