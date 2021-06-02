@@ -216,7 +216,6 @@ def main():
             sys.stdout.writelines(sql)
 
         if not dry_run:
-            print("DATABASE: "+config['db'])
             conn=pymysql.connect(
                     read_default_file='~/.my.cnf',
                     host=config['dbhost'],
